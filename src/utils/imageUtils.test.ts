@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
 	calculateBytesSaved,
-	calculateScaledDimensions,
 	clampQuality,
 	DEFAULT_QUALITY,
 	formatFileSize,
 	generateCompressedFilename,
 	getCompressionRatio,
+	isFileSizeValid,
 	isFileTypeSupported,
 	isValidQuality,
-	MAX_DIMENSION,
+	MAX_FILE_SIZE,
 	MAX_QUALITY,
 	MIN_QUALITY,
 	SUPPORTED_TYPES,
@@ -25,8 +25,8 @@ describe("imageUtils", () => {
 			expect(SUPPORTED_TYPES).toHaveLength(3);
 		});
 
-		it("should have correct MAX_DIMENSION", () => {
-			expect(MAX_DIMENSION).toBe(4096);
+		it("should have correct MAX_FILE_SIZE (15 MB)", () => {
+			expect(MAX_FILE_SIZE).toBe(15 * 1024 * 1024);
 		});
 
 		it("should have correct quality range", () => {
@@ -67,62 +67,36 @@ describe("imageUtils", () => {
 		});
 	});
 
-	describe("calculateScaledDimensions", () => {
-		it("should return original dimensions when within max", () => {
-			const result = calculateScaledDimensions(800, 600);
-			expect(result).toEqual({ width: 800, height: 600 });
+	describe("isFileSizeValid", () => {
+		it("should return true for file size within the default limit", () => {
+			expect(isFileSizeValid(1024)).toBe(true);
+			expect(isFileSizeValid(1 * 1024 * 1024)).toBe(true);
 		});
 
-		it("should scale down width-dominated images", () => {
-			const result = calculateScaledDimensions(8000, 4000, 4096);
-			expect(result.width).toBe(4096);
-			expect(result.height).toBe(2048);
+		it("should return true for file size exactly at the limit", () => {
+			expect(isFileSizeValid(MAX_FILE_SIZE)).toBe(true);
 		});
 
-		it("should scale down height-dominated images", () => {
-			const result = calculateScaledDimensions(4000, 8000, 4096);
-			expect(result.width).toBe(2048);
-			expect(result.height).toBe(4096);
+		it("should return false for file size exceeding the limit", () => {
+			expect(isFileSizeValid(MAX_FILE_SIZE + 1)).toBe(false);
 		});
 
-		it("should scale square images correctly", () => {
-			const result = calculateScaledDimensions(5000, 5000, 4096);
-			expect(result.width).toBe(4096);
-			expect(result.height).toBe(4096);
+		it("should return false for zero file size", () => {
+			expect(isFileSizeValid(0)).toBe(false);
 		});
 
-		it("should preserve aspect ratio when scaling down", () => {
-			const result = calculateScaledDimensions(6000, 3000, 4096);
-			const originalRatio = 6000 / 3000;
-			const newRatio = result.width / result.height;
-			expect(newRatio).toBeCloseTo(originalRatio, 1);
+		it("should return false for negative file size", () => {
+			expect(isFileSizeValid(-100)).toBe(false);
 		});
 
-		it("should use custom max dimension", () => {
-			const result = calculateScaledDimensions(2000, 1000, 1000);
-			expect(result.width).toBe(1000);
-			expect(result.height).toBe(500);
+		it("should accept a custom max size", () => {
+			const customMax = 5 * 1024 * 1024; // 5 MB
+			expect(isFileSizeValid(4 * 1024 * 1024, customMax)).toBe(true);
+			expect(isFileSizeValid(6 * 1024 * 1024, customMax)).toBe(false);
 		});
 
-		it("should throw error for zero width", () => {
-			expect(() => calculateScaledDimensions(0, 100)).toThrow(
-				"Width and height must be positive numbers",
-			);
-		});
-
-		it("should throw error for zero height", () => {
-			expect(() => calculateScaledDimensions(100, 0)).toThrow(
-				"Width and height must be positive numbers",
-			);
-		});
-
-		it("should throw error for negative dimensions", () => {
-			expect(() => calculateScaledDimensions(-100, 100)).toThrow(
-				"Width and height must be positive numbers",
-			);
-			expect(() => calculateScaledDimensions(100, -100)).toThrow(
-				"Width and height must be positive numbers",
-			);
+		it("should return true for 1 byte file", () => {
+			expect(isFileSizeValid(1)).toBe(true);
 		});
 	});
 
