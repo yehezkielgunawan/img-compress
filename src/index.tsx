@@ -1,10 +1,10 @@
-import { Hono } from 'hono'
+import { Hono } from "hono";
 
-import { renderer } from './renderer'
+import { renderer } from "./renderer";
 
-const app = new Hono()
+const app = new Hono();
 
-app.use(renderer)
+app.use(renderer);
 
 const Header = () => (
   <header class="navbar bg-base-100 shadow-lg">
@@ -28,19 +28,25 @@ const Header = () => (
       </a>
     </div>
   </header>
-)
+);
 
 const Footer = () => (
   <footer class="footer footer-center p-4 bg-base-100 text-base-content mt-8">
     <aside>
       <p class="text-sm">
-        100% Local - Your images never leave your device
+        100% Local - Your images never leave your device <br />
+        <span>
+          Made by{" "}
+          <a href="https://yehezgun.com" class="link link-primary">
+            Yehezkiel Gunawan
+          </a>
+        </span>
       </p>
     </aside>
   </footer>
-)
+);
 
-app.get('/', (c) => {
+app.get("/", (c) => {
   return c.render(
     <div class="min-h-screen flex flex-col">
       <Header />
@@ -48,8 +54,8 @@ app.get('/', (c) => {
         <div id="root"></div>
       </main>
       <Footer />
-    </div>
-  )
-})
+    </div>,
+  );
+});
 
-export default app
+export default app;
