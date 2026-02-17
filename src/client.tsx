@@ -54,8 +54,82 @@ const canvasToBlob = (
 };
 
 /**
- * Compress an image file using HTML Canvas API and createImageBitmap
- * Uses createImageBitmap for reliable image decoding on all devices including mobile
+ * Decode an image file into a drawable source with its dimensions.
+ * Uses <img> element + decode() as primary strategy (broadest codec support
+ * via OS-level decoders), then falls back to createImageBitmap.
+ */
+const decodeImage = async (
+  file: File,
+): Promise<{
+  source: HTMLImageElement | ImageBitmap;
+  width: number;
+  height: number;
+  cleanup: () => void;
+}> => {
+  // Strategy 1: <img> + decode() — leverages OS-level decoders (HEIC, etc.)
+  try {
+    const blobUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.src = blobUrl;
+
+    await img.decode();
+
+    const { naturalWidth: width, naturalHeight: height } = img;
+    return {
+      source: img,
+      width,
+      height,
+      cleanup: () => URL.revokeObjectURL(blobUrl),
+    };
+  } catch {
+    // Fall through to next strategy
+  }
+
+  // Strategy 2: createImageBitmap — works in Web Workers, handles some edge cases
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { width, height } = bitmap;
+    return {
+      source: bitmap,
+      width,
+      height,
+      cleanup: () => bitmap.close(),
+    };
+  } catch {
+    // Fall through
+  }
+
+  // Strategy 3: <img> + onload event — last resort for older browsers
+  return new Promise((resolve, reject) => {
+    const blobUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      const { naturalWidth: width, naturalHeight: height } = img;
+      resolve({
+        source: img,
+        width,
+        height,
+        cleanup: () => URL.revokeObjectURL(blobUrl),
+      });
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+      reject(
+        new Error(
+          "Unable to decode this image. Try converting it to JPG or PNG first.",
+        ),
+      );
+    };
+
+    img.src = blobUrl;
+  });
+};
+
+/**
+ * Compress an image file using HTML Canvas API
+ * Uses a multi-strategy image decoder for maximum mobile compatibility
  * @param file - The image file to compress
  * @param quality - Quality from 0.1 to 1.0
  * @returns Promise with compression result
@@ -75,22 +149,20 @@ const compressImage = async (
   }
 
   const validQuality = clampQuality(quality);
-
-  const bitmap = await createImageBitmap(file);
-  const { width, height } = bitmap;
+  const { source, width, height, cleanup } = await decodeImage(file);
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
   if (!ctx) {
-    bitmap.close();
+    cleanup();
     throw new Error("Failed to get canvas context");
   }
 
   canvas.width = width;
   canvas.height = height;
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
+  ctx.drawImage(source, 0, 0, width, height);
+  cleanup();
 
   const blob = await canvasToBlob(canvas, "image/jpeg", validQuality);
 
