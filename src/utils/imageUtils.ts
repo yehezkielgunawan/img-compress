@@ -9,25 +9,10 @@ export const SUPPORTED_TYPES = [
 	"image/jpg",
 	"image/png",
 ] as const;
-export const MAX_DIMENSION = 4096;
+export const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB in bytes
 export const DEFAULT_QUALITY = 0.8;
 export const MIN_QUALITY = 0.1;
 export const MAX_QUALITY = 1.0;
-
-// Types
-export interface ImageCompressionResult {
-	originalSize: number;
-	compressedSize: number;
-	compressedBlob: Blob;
-	compressedUrl: string;
-	width: number;
-	height: number;
-}
-
-export interface ImageDimensions {
-	width: number;
-	height: number;
-}
 
 /**
  * Check if a file type is supported for compression
@@ -39,36 +24,16 @@ export const isFileTypeSupported = (fileType: string): boolean => {
 };
 
 /**
- * Calculate scaled dimensions while preserving aspect ratio
- * @param width - Original width
- * @param height - Original height
- * @param maxDimension - Maximum allowed dimension
- * @returns Scaled dimensions
+ * Check if a file size is within the allowed limit
+ * @param fileSize - The file size in bytes
+ * @param maxSize - Maximum allowed size in bytes (defaults to MAX_FILE_SIZE)
+ * @returns Whether the file size is within the limit
  */
-export const calculateScaledDimensions = (
-	width: number,
-	height: number,
-	maxDimension: number = MAX_DIMENSION,
-): ImageDimensions => {
-	if (width <= 0 || height <= 0) {
-		throw new Error("Width and height must be positive numbers");
-	}
-
-	if (width <= maxDimension && height <= maxDimension) {
-		return { width, height };
-	}
-
-	if (width > height) {
-		return {
-			width: maxDimension,
-			height: Math.round((height / width) * maxDimension),
-		};
-	}
-
-	return {
-		width: Math.round((width / height) * maxDimension),
-		height: maxDimension,
-	};
+export const isFileSizeValid = (
+	fileSize: number,
+	maxSize: number = MAX_FILE_SIZE,
+): boolean => {
+	return fileSize > 0 && fileSize <= maxSize;
 };
 
 /**
