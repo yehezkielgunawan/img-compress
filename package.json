@@ -8,6 +8,7 @@
     "deploy": "$npm_execpath run build && wrangler deploy",
     "biome:format": "biome format src/ --write",
     "biome:lint": "biome lint src/ --write",
+    "biome:lint:ci": "biome lint src/",
     "test": "vitest",
     "test:ci": "vitest run --coverage --reporter=verbose",
     "test:coverage": "vitest run --coverage",
