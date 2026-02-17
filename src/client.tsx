@@ -56,52 +56,51 @@ const compressImage = (
     }
 
     const validQuality = clampQuality(quality);
-    const reader = new FileReader();
+    const blobUrl = URL.createObjectURL(file);
+    const img = new Image();
 
-    reader.onload = (e) => {
-      const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(blobUrl);
 
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
 
-        if (!ctx) {
-          reject(new Error("Failed to get canvas context"));
-          return;
-        }
+      if (!ctx) {
+        reject(new Error("Failed to get canvas context"));
+        return;
+      }
 
-        const { naturalWidth: width, naturalHeight: height } = img;
+      const { naturalWidth: width, naturalHeight: height } = img;
 
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(img, 0, 0, width, height);
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
 
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error("Failed to compress image"));
-              return;
-            }
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error("Failed to compress image"));
+            return;
+          }
 
-            resolve({
-              compressedUrl: URL.createObjectURL(blob),
-              compressedSize: blob.size,
-              originalSize: file.size,
-              width: Math.round(width),
-              height: Math.round(height),
-            });
-          },
-          "image/jpeg",
-          validQuality,
-        );
-      };
-
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = e.target?.result as string;
+          resolve({
+            compressedUrl: URL.createObjectURL(blob),
+            compressedSize: blob.size,
+            originalSize: file.size,
+            width: Math.round(width),
+            height: Math.round(height),
+          });
+        },
+        "image/jpeg",
+        validQuality,
+      );
     };
 
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = blobUrl;
   });
 };
 
