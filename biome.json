@@ -64,7 +64,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/app/globals.css"],
+      "includes": ["src/app/globals.css", "*.d.ts"],
       "linter": {
         "enabled": false
       }
