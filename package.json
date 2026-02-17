@@ -6,6 +6,8 @@
     "build": "vite build",
     "preview": "$npm_execpath run build && vite preview",
     "deploy": "$npm_execpath run build && wrangler deploy",
+    "biome:format": "biome format src/ --write",
+    "biome:lint": "biome lint src/ --write",
     "test": "vitest",
     "test:ci": "vitest run --coverage --reporter=verbose",
     "test:coverage": "vitest run --coverage",
@@ -17,6 +19,7 @@
     "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.2",
     "@cloudflare/vite-plugin": "^1.2.3",
     "@types/node": "^25.2.3",
     "@vitest/coverage-v8": "^4.0.18",
