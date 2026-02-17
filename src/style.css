@@ -3,63 +3,64 @@
 
 /* Base styles */
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	font-family:
+		system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 /* Drop zone transitions */
 #drop-zone {
-  transition: all 0.2s ease-in-out;
+	transition: all 0.2s ease-in-out;
 }
 
 /* Image preview smooth loading */
 #original-preview,
 #compressed-preview {
-  transition: opacity 0.3s ease-in-out;
+	transition: opacity 0.3s ease-in-out;
 }
 
 /* Stats responsive adjustments */
 @media (max-width: 768px) {
-  .stats {
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .stat {
-    border-bottom: 1px solid oklch(var(--b3));
-    border-right: none;
-  }
-  
-  .stat:last-child {
-    border-bottom: none;
-  }
+	.stats {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.stat {
+		border-bottom: 1px solid oklch(var(--b3));
+		border-right: none;
+	}
+
+	.stat:last-child {
+		border-bottom: none;
+	}
 }
 
 /* Toast positioning fix for mobile */
 .toast-top {
-  top: 1rem;
+	top: 1rem;
 }
 
 /* Smooth scrolling */
 html {
-  scroll-behavior: smooth;
+	scroll-behavior: smooth;
 }
 
 /* Focus styles for accessibility */
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid oklch(var(--p));
-  outline-offset: 2px;
+	outline: 2px solid oklch(var(--p));
+	outline-offset: 2px;
 }
 
 /* Range slider thumb mobile touch target */
 @media (max-width: 768px) {
-  input[type="range"]::-webkit-slider-thumb {
-    width: 24px;
-    height: 24px;
-  }
-  
-  input[type="range"]::-moz-range-thumb {
-    width: 24px;
-    height: 24px;
-  }
+	input[type="range"]::-webkit-slider-thumb {
+		width: 24px;
+		height: 24px;
+	}
+
+	input[type="range"]::-moz-range-thumb {
+		width: 24px;
+		height: 24px;
+	}
 }

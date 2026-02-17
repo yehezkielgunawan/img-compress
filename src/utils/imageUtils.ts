@@ -4,25 +4,29 @@
  */
 
 // Constants (UPPER_SNAKE_CASE per AGENTS.md)
-export const SUPPORTED_TYPES = ['image/jpeg', 'image/jpg', 'image/png'] as const
-export const MAX_DIMENSION = 4096
-export const DEFAULT_QUALITY = 0.8
-export const MIN_QUALITY = 0.1
-export const MAX_QUALITY = 1.0
+export const SUPPORTED_TYPES = [
+	"image/jpeg",
+	"image/jpg",
+	"image/png",
+] as const;
+export const MAX_DIMENSION = 4096;
+export const DEFAULT_QUALITY = 0.8;
+export const MIN_QUALITY = 0.1;
+export const MAX_QUALITY = 1.0;
 
 // Types
 export interface ImageCompressionResult {
-  originalSize: number
-  compressedSize: number
-  compressedBlob: Blob
-  compressedUrl: string
-  width: number
-  height: number
+	originalSize: number;
+	compressedSize: number;
+	compressedBlob: Blob;
+	compressedUrl: string;
+	width: number;
+	height: number;
 }
 
 export interface ImageDimensions {
-  width: number
-  height: number
+	width: number;
+	height: number;
 }
 
 /**
@@ -31,8 +35,8 @@ export interface ImageDimensions {
  * @returns Whether the file type is supported
  */
 export const isFileTypeSupported = (fileType: string): boolean => {
-  return SUPPORTED_TYPES.includes(fileType as typeof SUPPORTED_TYPES[number])
-}
+	return SUPPORTED_TYPES.includes(fileType as (typeof SUPPORTED_TYPES)[number]);
+};
 
 /**
  * Calculate scaled dimensions while preserving aspect ratio
@@ -42,30 +46,30 @@ export const isFileTypeSupported = (fileType: string): boolean => {
  * @returns Scaled dimensions
  */
 export const calculateScaledDimensions = (
-  width: number,
-  height: number,
-  maxDimension: number = MAX_DIMENSION
+	width: number,
+	height: number,
+	maxDimension: number = MAX_DIMENSION,
 ): ImageDimensions => {
-  if (width <= 0 || height <= 0) {
-    throw new Error('Width and height must be positive numbers')
-  }
+	if (width <= 0 || height <= 0) {
+		throw new Error("Width and height must be positive numbers");
+	}
 
-  if (width <= maxDimension && height <= maxDimension) {
-    return { width, height }
-  }
+	if (width <= maxDimension && height <= maxDimension) {
+		return { width, height };
+	}
 
-  if (width > height) {
-    return {
-      width: maxDimension,
-      height: Math.round((height / width) * maxDimension),
-    }
-  }
+	if (width > height) {
+		return {
+			width: maxDimension,
+			height: Math.round((height / width) * maxDimension),
+		};
+	}
 
-  return {
-    width: Math.round((width / height) * maxDimension),
-    height: maxDimension,
-  }
-}
+	return {
+		width: Math.round((width / height) * maxDimension),
+		height: maxDimension,
+	};
+};
 
 /**
  * Format file size in human readable format
@@ -73,19 +77,23 @@ export const calculateScaledDimensions = (
  * @returns Formatted string (e.g., "1.5 MB")
  */
 export const formatFileSize = (bytes: number): string => {
-  if (bytes < 0) {
-    throw new Error('Bytes cannot be negative')
-  }
+	if (bytes < 0) {
+		throw new Error("Bytes cannot be negative");
+	}
 
-  if (bytes === 0) return '0 Bytes'
+	if (bytes === 0) return "0 Bytes";
 
-  const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  const clampedIndex = Math.min(i, sizes.length - 1)
+	const k = 1024;
+	const sizes = ["Bytes", "KB", "MB", "GB"];
+	const i = Math.floor(Math.log(bytes) / Math.log(k));
+	const clampedIndex = Math.min(i, sizes.length - 1);
 
-  return parseFloat((bytes / Math.pow(k, clampedIndex)).toFixed(2)) + ' ' + sizes[clampedIndex]
-}
+	return (
+		parseFloat((bytes / k ** clampedIndex).toFixed(2)) +
+		" " +
+		sizes[clampedIndex]
+	);
+};
 
 /**
  * Calculate compression ratio as a percentage
@@ -93,18 +101,21 @@ export const formatFileSize = (bytes: number): string => {
  * @param compressedSize - Compressed file size in bytes
  * @returns Compression ratio as a formatted string (e.g., "45.5")
  */
-export const getCompressionRatio = (originalSize: number, compressedSize: number): string => {
-  if (originalSize <= 0) {
-    throw new Error('Original size must be a positive number')
-  }
+export const getCompressionRatio = (
+	originalSize: number,
+	compressedSize: number,
+): string => {
+	if (originalSize <= 0) {
+		throw new Error("Original size must be a positive number");
+	}
 
-  if (compressedSize < 0) {
-    throw new Error('Compressed size cannot be negative')
-  }
+	if (compressedSize < 0) {
+		throw new Error("Compressed size cannot be negative");
+	}
 
-  const ratio = ((originalSize - compressedSize) / originalSize) * 100
-  return ratio.toFixed(1)
-}
+	const ratio = ((originalSize - compressedSize) / originalSize) * 100;
+	return ratio.toFixed(1);
+};
 
 /**
  * Validate quality value is within acceptable range
@@ -112,8 +123,8 @@ export const getCompressionRatio = (originalSize: number, compressedSize: number
  * @returns Whether the quality is valid
  */
 export const isValidQuality = (quality: number): boolean => {
-  return quality >= MIN_QUALITY && quality <= MAX_QUALITY
-}
+	return quality >= MIN_QUALITY && quality <= MAX_QUALITY;
+};
 
 /**
  * Clamp quality value to acceptable range
@@ -121,8 +132,8 @@ export const isValidQuality = (quality: number): boolean => {
  * @returns Clamped quality value
  */
 export const clampQuality = (quality: number): number => {
-  return Math.max(MIN_QUALITY, Math.min(MAX_QUALITY, quality))
-}
+	return Math.max(MIN_QUALITY, Math.min(MAX_QUALITY, quality));
+};
 
 /**
  * Generate compressed filename from original filename
@@ -131,12 +142,12 @@ export const clampQuality = (quality: number): number => {
  * @returns New filename with suffix and .jpg extension
  */
 export const generateCompressedFilename = (
-  originalFilename: string,
-  suffix: string = '_compressed'
+	originalFilename: string,
+	suffix: string = "_compressed",
 ): string => {
-  const nameWithoutExt = originalFilename.replace(/\.[^/.]+$/, '')
-  return `${nameWithoutExt}${suffix}.jpg`
-}
+	const nameWithoutExt = originalFilename.replace(/\.[^/.]+$/, "");
+	return `${nameWithoutExt}${suffix}.jpg`;
+};
 
 /**
  * Calculate bytes saved from compression
@@ -144,6 +155,9 @@ export const generateCompressedFilename = (
  * @param compressedSize - Compressed file size in bytes
  * @returns Bytes saved (can be negative if compression increased size)
  */
-export const calculateBytesSaved = (originalSize: number, compressedSize: number): number => {
-  return originalSize - compressedSize
-}
+export const calculateBytesSaved = (
+	originalSize: number,
+	compressedSize: number,
+): number => {
+	return originalSize - compressedSize;
+};
