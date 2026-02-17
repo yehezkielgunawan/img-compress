@@ -33,5 +33,8 @@ jobs:
       - name: Build (Vite)
         run: pnpm build
 
+      - name: Run Biome Lint
+        run: pnpm biome:lint:ci
+
       - name: Run Unit Tests
         run: pnpm test:ci
