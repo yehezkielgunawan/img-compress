@@ -31,77 +31,76 @@ interface CompressionResult {
 }
 
 /**
- * Compress an image file using HTML Canvas API
+ * Convert canvas.toBlob into a Promise
+ */
+const canvasToBlob = (
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality: number,
+): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Failed to compress image"));
+          return;
+        }
+        resolve(blob);
+      },
+      type,
+      quality,
+    );
+  });
+};
+
+/**
+ * Compress an image file using HTML Canvas API and createImageBitmap
+ * Uses createImageBitmap for reliable image decoding on all devices including mobile
  * @param file - The image file to compress
  * @param quality - Quality from 0.1 to 1.0
  * @returns Promise with compression result
  */
-const compressImage = (
+const compressImage = async (
   file: File,
   quality: number,
 ): Promise<CompressionResult> => {
-  return new Promise((resolve, reject) => {
-    if (!isFileTypeSupported(file.type)) {
-      reject(new Error("Unsupported file type. Please use JPG, JPEG, or PNG."));
-      return;
-    }
+  if (!isFileTypeSupported(file.type)) {
+    throw new Error("Unsupported file type. Please use JPG, JPEG, or PNG.");
+  }
 
-    if (!isFileSizeValid(file.size)) {
-      reject(
-        new Error(
-          `File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`,
-        ),
-      );
-      return;
-    }
+  if (!isFileSizeValid(file.size)) {
+    throw new Error(
+      `File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`,
+    );
+  }
 
-    const validQuality = clampQuality(quality);
-    const blobUrl = URL.createObjectURL(file);
-    const img = new Image();
+  const validQuality = clampQuality(quality);
 
-    img.onload = () => {
-      URL.revokeObjectURL(blobUrl);
+  const bitmap = await createImageBitmap(file);
+  const { width, height } = bitmap;
 
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
 
-      if (!ctx) {
-        reject(new Error("Failed to get canvas context"));
-        return;
-      }
+  if (!ctx) {
+    bitmap.close();
+    throw new Error("Failed to get canvas context");
+  }
 
-      const { naturalWidth: width, naturalHeight: height } = img;
+  canvas.width = width;
+  canvas.height = height;
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
 
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(img, 0, 0, width, height);
+  const blob = await canvasToBlob(canvas, "image/jpeg", validQuality);
 
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(new Error("Failed to compress image"));
-            return;
-          }
-
-          resolve({
-            compressedUrl: URL.createObjectURL(blob),
-            compressedSize: blob.size,
-            originalSize: file.size,
-            width: Math.round(width),
-            height: Math.round(height),
-          });
-        },
-        "image/jpeg",
-        validQuality,
-      );
-    };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(blobUrl);
-      reject(new Error("Failed to load image"));
-    };
-    img.src = blobUrl;
-  });
+  return {
+    compressedUrl: URL.createObjectURL(blob),
+    compressedSize: blob.size,
+    originalSize: file.size,
+    width,
+    height,
+  };
 };
 
 /**
