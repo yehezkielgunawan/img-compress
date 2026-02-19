@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	calculateBytesSaved,
+	calculateScaledDimensions,
 	clampQuality,
 	DEFAULT_QUALITY,
 	formatFileSize,
@@ -10,6 +11,7 @@ import {
 	isFileSizeValid,
 	isFileTypeSupported,
 	isValidQuality,
+	MAX_CANVAS_DIMENSION,
 	MAX_FILE_SIZE,
 	MAX_QUALITY,
 	MIN_QUALITY,
@@ -27,6 +29,10 @@ describe("imageUtils", () => {
 
 		it("should have correct MAX_FILE_SIZE (15 MB)", () => {
 			expect(MAX_FILE_SIZE).toBe(15 * 1024 * 1024);
+		});
+
+		it("should have correct MAX_CANVAS_DIMENSION", () => {
+			expect(MAX_CANVAS_DIMENSION).toBe(4096);
 		});
 
 		it("should have correct quality range", () => {
@@ -97,6 +103,65 @@ describe("imageUtils", () => {
 
 		it("should return true for 1 byte file", () => {
 			expect(isFileSizeValid(1)).toBe(true);
+		});
+	});
+
+	describe("calculateScaledDimensions", () => {
+		it("should return original dimensions when within max", () => {
+			const result = calculateScaledDimensions(800, 600);
+			expect(result).toEqual({ width: 800, height: 600 });
+		});
+
+		it("should scale down width-dominated images", () => {
+			const result = calculateScaledDimensions(8000, 4000);
+			expect(result.width).toBe(MAX_CANVAS_DIMENSION);
+			expect(result.height).toBe(2048);
+		});
+
+		it("should scale down height-dominated images", () => {
+			const result = calculateScaledDimensions(4000, 8000);
+			expect(result.width).toBe(2048);
+			expect(result.height).toBe(MAX_CANVAS_DIMENSION);
+		});
+
+		it("should scale square images correctly", () => {
+			const result = calculateScaledDimensions(5000, 5000);
+			expect(result.width).toBe(MAX_CANVAS_DIMENSION);
+			expect(result.height).toBe(MAX_CANVAS_DIMENSION);
+		});
+
+		it("should preserve aspect ratio when scaling down", () => {
+			const result = calculateScaledDimensions(6000, 3000);
+			const originalRatio = 6000 / 3000;
+			const newRatio = result.width / result.height;
+			expect(newRatio).toBeCloseTo(originalRatio, 1);
+		});
+
+		it("should use custom max dimension", () => {
+			const result = calculateScaledDimensions(2000, 1000, 1000);
+			expect(result.width).toBe(1000);
+			expect(result.height).toBe(500);
+		});
+
+		it("should throw error for zero width", () => {
+			expect(() => calculateScaledDimensions(0, 100)).toThrow(
+				"Width and height must be positive numbers",
+			);
+		});
+
+		it("should throw error for zero height", () => {
+			expect(() => calculateScaledDimensions(100, 0)).toThrow(
+				"Width and height must be positive numbers",
+			);
+		});
+
+		it("should throw error for negative dimensions", () => {
+			expect(() => calculateScaledDimensions(-100, 100)).toThrow(
+				"Width and height must be positive numbers",
+			);
+			expect(() => calculateScaledDimensions(100, -100)).toThrow(
+				"Width and height must be positive numbers",
+			);
 		});
 	});
 

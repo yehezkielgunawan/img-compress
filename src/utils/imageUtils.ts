@@ -10,9 +10,15 @@ export const SUPPORTED_TYPES = [
 	"image/png",
 ] as const;
 export const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB in bytes
+export const MAX_CANVAS_DIMENSION = 4096;
 export const DEFAULT_QUALITY = 0.8;
 export const MIN_QUALITY = 0.1;
 export const MAX_QUALITY = 1.0;
+
+export interface ImageDimensions {
+	width: number;
+	height: number;
+}
 
 /**
  * Check if a file type is supported for compression
@@ -34,6 +40,36 @@ export const isFileSizeValid = (
 	maxSize: number = MAX_FILE_SIZE,
 ): boolean => {
 	return fileSize > 0 && fileSize <= maxSize;
+};
+
+/**
+ * Calculate scaled dimensions that fit within maxDimension while preserving aspect ratio.
+ * Used internally to cap canvas size for mobile compatibility.
+ */
+export const calculateScaledDimensions = (
+	width: number,
+	height: number,
+	maxDimension: number = MAX_CANVAS_DIMENSION,
+): ImageDimensions => {
+	if (width <= 0 || height <= 0) {
+		throw new Error("Width and height must be positive numbers");
+	}
+
+	if (width <= maxDimension && height <= maxDimension) {
+		return { width, height };
+	}
+
+	if (width > height) {
+		return {
+			width: maxDimension,
+			height: Math.round((height / width) * maxDimension),
+		};
+	}
+
+	return {
+		width: Math.round((width / height) * maxDimension),
+		height: maxDimension,
+	};
 };
 
 /**
