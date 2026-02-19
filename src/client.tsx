@@ -10,6 +10,7 @@ import { render } from "hono/jsx/dom";
 
 import {
   calculateBytesSaved,
+  calculateScaledDimensions,
   clampQuality,
   DEFAULT_QUALITY,
   formatFileSize,
@@ -17,8 +18,10 @@ import {
   getCompressionRatio,
   isFileSizeValid,
   isFileTypeSupported,
+  MAX_CANVAS_DIMENSION,
   MAX_FILE_SIZE,
 } from "./utils/imageUtils";
+import type { CompressError, CompressRequest, CompressSuccess } from "./compressWorker";
 
 // Types
 
@@ -31,112 +34,94 @@ interface CompressionResult {
 }
 
 /**
- * Convert canvas.toBlob into a Promise
+ * Compress via Web Worker (resize-during-decode + OffscreenCanvas).
+ * The worker calls createImageBitmap with resizeWidth/resizeHeight so the
+ * browser decodes directly into a small bitmap — the full-res pixels never
+ * touch memory. Then OffscreenCanvas exports JPEG off the main thread.
  */
-const canvasToBlob = (
-  canvas: HTMLCanvasElement,
-  type: string,
+const compressInWorker = (
+  file: File,
   quality: number,
-): Promise<Blob> => {
+  originalWidth: number,
+  originalHeight: number,
+): Promise<{ blob: Blob; width: number; height: number }> => {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error("Failed to compress image"));
-          return;
-        }
-        resolve(blob);
-      },
-      type,
-      quality,
+    const worker = new Worker(
+      new URL("./compressWorker.ts", import.meta.url),
+      { type: "module" },
     );
+
+    worker.onmessage = (e: MessageEvent<CompressSuccess | CompressError>) => {
+      worker.terminate();
+      if ("error" in e.data) {
+        reject(new Error(e.data.error));
+      } else {
+        resolve(e.data);
+      }
+    };
+
+    worker.onerror = (err) => {
+      worker.terminate();
+      reject(new Error(err.message || "Worker failed"));
+    };
+
+    const msg: CompressRequest = { file, quality, originalWidth, originalHeight };
+    worker.postMessage(msg);
   });
 };
 
 /**
- * Decode an image file into a drawable source with its dimensions.
- * Uses <img> element + decode() as primary strategy (broadest codec support
- * via OS-level decoders), then falls back to createImageBitmap.
+ * Main-thread fallback when Web Worker / OffscreenCanvas is unavailable.
+ * Uses <img> + decode() for broadest codec support, then a regular canvas.
  */
-const decodeImage = async (
+const compressFallback = async (
   file: File,
-): Promise<{
-  source: HTMLImageElement | ImageBitmap;
-  width: number;
-  height: number;
-  cleanup: () => void;
-}> => {
-  // Strategy 1: <img> + decode() — leverages OS-level decoders (HEIC, etc.)
+  quality: number,
+  originalWidth: number,
+  originalHeight: number,
+): Promise<{ blob: Blob; width: number; height: number }> => {
+  const { width, height } = calculateScaledDimensions(
+    originalWidth,
+    originalHeight,
+    MAX_CANVAS_DIMENSION,
+  );
+
+  const blobUrl = URL.createObjectURL(file);
   try {
-    const blobUrl = URL.createObjectURL(file);
     const img = new Image();
     img.src = blobUrl;
-
     await img.decode();
 
-    const { naturalWidth: width, naturalHeight: height } = img;
-    return {
-      source: img,
-      width,
-      height,
-      cleanup: () => URL.revokeObjectURL(blobUrl),
-    };
-  } catch {
-    // Fall through to next strategy
-  }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to get canvas context");
 
-  // Strategy 2: createImageBitmap — works in Web Workers, handles some edge cases
-  try {
-    const bitmap = await createImageBitmap(file);
-    const { width, height } = bitmap;
-    return {
-      source: bitmap,
-      width,
-      height,
-      cleanup: () => bitmap.close(),
-    };
-  } catch {
-    // Fall through
-  }
+    ctx.drawImage(img, 0, 0, width, height);
 
-  // Strategy 3: <img> + onload event — last resort for older browsers
-  return new Promise((resolve, reject) => {
-    const blobUrl = URL.createObjectURL(file);
-    const img = new Image();
-
-    img.onload = () => {
-      const { naturalWidth: width, naturalHeight: height } = img;
-      resolve({
-        source: img,
-        width,
-        height,
-        cleanup: () => URL.revokeObjectURL(blobUrl),
-      });
-    };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(blobUrl);
-      reject(
-        new Error(
-          "Unable to decode this image. Try converting it to JPG or PNG first.",
-        ),
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("Failed to export canvas"))),
+        "image/jpeg",
+        clampQuality(quality),
       );
-    };
+    });
 
-    img.src = blobUrl;
-  });
+    return { blob, width, height };
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 };
 
 /**
- * Compress an image file using HTML Canvas API
- * Uses a multi-strategy image decoder for maximum mobile compatibility
- * @param file - The image file to compress
- * @param quality - Quality from 0.1 to 1.0
- * @returns Promise with compression result
+ * Compress an image: tries Web Worker first, falls back to main thread.
  */
 const compressImage = async (
   file: File,
   quality: number,
+  originalWidth: number,
+  originalHeight: number,
 ): Promise<CompressionResult> => {
   if (!isFileTypeSupported(file.type)) {
     throw new Error("Unsupported file type. Please use JPG, JPEG, or PNG.");
@@ -148,30 +133,20 @@ const compressImage = async (
     );
   }
 
-  const validQuality = clampQuality(quality);
-  const { source, width, height, cleanup } = await decodeImage(file);
+  let result: { blob: Blob; width: number; height: number };
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-
-  if (!ctx) {
-    cleanup();
-    throw new Error("Failed to get canvas context");
+  try {
+    result = await compressInWorker(file, quality, originalWidth, originalHeight);
+  } catch {
+    result = await compressFallback(file, quality, originalWidth, originalHeight);
   }
 
-  canvas.width = width;
-  canvas.height = height;
-  ctx.drawImage(source, 0, 0, width, height);
-  cleanup();
-
-  const blob = await canvasToBlob(canvas, "image/jpeg", validQuality);
-
   return {
-    compressedUrl: URL.createObjectURL(blob),
-    compressedSize: blob.size,
+    compressedUrl: URL.createObjectURL(result.blob),
+    compressedSize: result.blob.size,
     originalSize: file.size,
-    width,
-    height,
+    width: result.width,
+    height: result.height,
   };
 };
 
@@ -250,16 +225,22 @@ const ImageCompressor = () => {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  // Effect: Compress image when file or quality changes (debounced)
+  // Effect: Compress when file/quality/dimensions change (debounced).
+  // Waits for originalDimensions so the worker knows the resize target.
   useEffect(() => {
-    if (!file) return;
+    if (!file || !originalDimensions) return;
 
     let cancelled = false;
     setIsLoading(true);
 
     const timer = setTimeout(async () => {
       try {
-        const newResult = await compressImage(file, quality);
+        const newResult = await compressImage(
+          file,
+          quality,
+          originalDimensions.width,
+          originalDimensions.height,
+        );
         if (!cancelled) {
           if (resultRef.current?.compressedUrl) {
             URL.revokeObjectURL(resultRef.current.compressedUrl);
@@ -282,7 +263,7 @@ const ImageCompressor = () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [file, quality]);
+  }, [file, quality, originalDimensions]);
 
   // Handlers
 
@@ -527,7 +508,7 @@ const ImageCompressor = () => {
             </div>
           </div>
 
-          {/* Stats & Actions */}
+          {/* Stats */}
           {result && (
             <div class="card mt-4 bg-base-100 shadow-xl md:mt-6">
               <div class="card-body p-4 md:p-6">
@@ -559,53 +540,55 @@ const ImageCompressor = () => {
                     <div class="stat-desc">Bytes Saved</div>
                   </div>
                 </div>
-
-                {/* Action Buttons */}
-                <div class="card-actions mt-4 flex-col justify-center gap-2 sm:flex-row md:mt-6">
-                  <button
-                    type="button"
-                    class="btn btn-primary btn-wide"
-                    onClick={handleDownload}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="mr-2 h-5 w-5"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    Download Compressed
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-outline btn-wide"
-                    onClick={handleReset}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="mr-2 h-5 w-5"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    Start Over
-                  </button>
-                </div>
               </div>
             </div>
           )}
+
+          {/* Action Buttons — always visible once a file is selected */}
+          <div class="mt-4 flex flex-col items-center justify-center gap-2 sm:flex-row md:mt-6">
+            {result && (
+              <button
+                type="button"
+                class="btn btn-primary btn-wide"
+                onClick={handleDownload}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="mr-2 h-5 w-5"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                Download Compressed
+              </button>
+            )}
+            <button
+              type="button"
+              class="btn btn-outline btn-wide"
+              onClick={handleReset}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="mr-2 h-5 w-5"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fill-rule="evenodd"
+                  d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+              Start Over
+            </button>
+          </div>
         </div>
       )}
 

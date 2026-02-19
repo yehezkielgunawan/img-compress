@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
           'src/renderer.tsx',
           'src/index.tsx',
           'src/client.tsx',
+          'src/compressWorker.ts',
           '**/*.d.ts',
           'node_modules/**',
         ],
