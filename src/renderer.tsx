@@ -56,6 +56,7 @@ export const renderer = jsxRenderer(({ children }) => {
 				<ViteClient />
 				<Link href="/src/style.css" rel="stylesheet" />
 				<Script src="/src/client.tsx" />
+				<Script src="/src/pixoClient.tsx" />
 			</head>
 			<body class="min-h-screen bg-base-200">{children}</body>
 		</html>

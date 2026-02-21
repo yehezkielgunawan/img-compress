@@ -1,18 +1,11 @@
 /** @jsxImportSource hono/jsx/dom */
 
-/**
- * Client-side image compressor using Hono JSX DOM
- * with hooks for state management and Canvas API for compression
- */
-
 import { useEffect, useRef, useState } from "hono/jsx";
 import { render } from "hono/jsx/dom";
 
 import {
 	calculateBytesSaved,
 	calculateScaledDimensions,
-	clampQuality,
-	DEFAULT_QUALITY,
 	formatFileSize,
 	generateCompressedFilename,
 	getCompressionRatio,
@@ -21,163 +14,119 @@ import {
 	MAX_CANVAS_DIMENSION,
 	MAX_FILE_SIZE,
 } from "./utils/imageUtils";
-import type {
-	CompressError,
-	CompressRequest,
-	CompressSuccess,
-} from "./compressWorker";
+import initPixo, { encodeJpeg } from "./utils/pixo-wasm/pixo";
 
-// Types
+const PIXO_DEFAULT_QUALITY = 85;
+const PIXO_MIN_QUALITY = 1;
+const PIXO_MAX_QUALITY = 100;
 
-interface CompressionResult {
-	compressedUrl: string;
+interface PixoResult {
+	compressedBlob: Blob;
 	compressedSize: number;
 	originalSize: number;
 	width: number;
 	height: number;
 }
 
-/**
- * Compress via Web Worker (resize-during-decode + OffscreenCanvas).
- * The worker calls createImageBitmap with resizeWidth/resizeHeight so the
- * browser decodes directly into a small bitmap — the full-res pixels never
- * touch memory. Then OffscreenCanvas exports JPEG off the main thread.
- */
-const compressInWorker = (
-	file: File,
-	quality: number,
-	originalWidth: number,
-	originalHeight: number,
-): Promise<{ blob: Blob; width: number; height: number }> => {
-	return new Promise((resolve, reject) => {
-		const worker = new Worker(new URL("./compressWorker.ts", import.meta.url), {
-			type: "module",
-		});
+let pixoReady: Promise<void> | null = null;
 
-		worker.onmessage = (e: MessageEvent<CompressSuccess | CompressError>) => {
-			worker.terminate();
-			if ("error" in e.data) {
-				reject(new Error(e.data.error));
-			} else {
-				resolve(e.data);
-			}
-		};
+const ensurePixoInit = (): Promise<void> => {
+	if (!pixoReady) {
+		pixoReady = initPixo().then(() => undefined);
+	}
+	return pixoReady;
+};
 
-		worker.onerror = (err) => {
-			worker.terminate();
-			reject(new Error(err.message || "Worker failed"));
-		};
-
-		const msg: CompressRequest = {
-			file,
-			quality,
-			originalWidth,
-			originalHeight,
-		};
-		worker.postMessage(msg);
-	});
+const rgbaToRgb = (rgba: Uint8ClampedArray): Uint8Array => {
+	const pixelCount = rgba.length / 4;
+	const rgb = new Uint8Array(pixelCount * 3);
+	for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+		rgb[j] = rgba[i];
+		rgb[j + 1] = rgba[i + 1];
+		rgb[j + 2] = rgba[i + 2];
+	}
+	return rgb;
 };
 
 /**
- * Main-thread fallback when Web Worker / OffscreenCanvas is unavailable.
- * Uses <img> + decode() for broadest codec support, then a regular canvas.
+ * Extract raw pixel data from a File using resize-during-decode + hidden canvas.
+ * Returns RGB pixel data at a capped resolution.
  */
-const compressFallback = async (
+const extractPixels = async (
 	file: File,
-	quality: number,
 	originalWidth: number,
 	originalHeight: number,
-): Promise<{ blob: Blob; width: number; height: number }> => {
+): Promise<{ rgb: Uint8Array; width: number; height: number }> => {
 	const { width, height } = calculateScaledDimensions(
 		originalWidth,
 		originalHeight,
 		MAX_CANVAS_DIMENSION,
 	);
 
-	const blobUrl = URL.createObjectURL(file);
-	try {
-		const img = new Image();
-		img.src = blobUrl;
-		await img.decode();
+	const bitmap = await createImageBitmap(file, {
+		resizeWidth: width,
+		resizeHeight: height,
+		resizeQuality: "high",
+	});
 
-		const canvas = document.createElement("canvas");
-		canvas.width = width;
-		canvas.height = height;
-		const ctx = canvas.getContext("2d");
-		if (!ctx) throw new Error("Failed to get canvas context");
+	const canvas = document.createElement("canvas");
+	canvas.width = width;
+	canvas.height = height;
+	const ctx = canvas.getContext("2d");
 
-		ctx.drawImage(img, 0, 0, width, height);
-
-		const blob = await new Promise<Blob>((resolve, reject) => {
-			canvas.toBlob(
-				(b) => (b ? resolve(b) : reject(new Error("Failed to export canvas"))),
-				"image/jpeg",
-				clampQuality(quality),
-			);
-		});
-
-		return { blob, width, height };
-	} finally {
-		URL.revokeObjectURL(blobUrl);
+	if (!ctx) {
+		bitmap.close();
+		throw new Error("Failed to get canvas context");
 	}
+
+	ctx.drawImage(bitmap, 0, 0);
+	bitmap.close();
+
+	const imageData = ctx.getImageData(0, 0, width, height);
+	const rgb = rgbaToRgb(imageData.data);
+
+	return { rgb, width, height };
 };
 
 /**
- * Compress an image: tries Web Worker first, falls back to main thread.
+ * Compress an image using Pixo WASM encoder.
+ * quality: 1-100, preset 1 = balanced, subsampling420 = true for smaller files.
  */
-const compressImage = async (
+const compressWithPixo = async (
 	file: File,
 	quality: number,
 	originalWidth: number,
 	originalHeight: number,
-): Promise<CompressionResult> => {
-	if (!isFileTypeSupported(file.type)) {
-		throw new Error("Unsupported file type. Please use JPG, JPEG, or PNG.");
-	}
+): Promise<PixoResult> => {
+	await ensurePixoInit();
 
-	if (!isFileSizeValid(file.size)) {
-		throw new Error(
-			`File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`,
-		);
-	}
+	const { rgb, width, height } = await extractPixels(
+		file,
+		originalWidth,
+		originalHeight,
+	);
 
-	let result: { blob: Blob; width: number; height: number };
-
-	try {
-		result = await compressInWorker(
-			file,
-			quality,
-			originalWidth,
-			originalHeight,
-		);
-	} catch {
-		result = await compressFallback(
-			file,
-			quality,
-			originalWidth,
-			originalHeight,
-		);
-	}
+	const jpegBytes = encodeJpeg(rgb, width, height, 2, quality, 1, true);
+	const blob = new Blob([jpegBytes], { type: "image/jpeg" });
 
 	return {
-		compressedUrl: URL.createObjectURL(result.blob),
-		compressedSize: result.blob.size,
+		compressedBlob: blob,
+		compressedSize: blob.size,
 		originalSize: file.size,
-		width: result.width,
-		height: result.height,
+		width,
+		height,
 	};
 };
 
-/**
- * Trigger download of a file from an object URL
- */
-const downloadFile = (url: string, filename: string): void => {
+const downloadBlob = (blob: Blob, filename: string): void => {
+	const url = URL.createObjectURL(blob);
 	const link = document.createElement("a");
 	link.href = url;
 	link.download = filename;
 	document.body.appendChild(link);
 	link.click();
 	document.body.removeChild(link);
+	URL.revokeObjectURL(url);
 };
 
 // Sub-components
@@ -186,7 +135,9 @@ const LoadingOverlay = () => (
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-base-300/80">
 		<div class="text-center">
 			<span class="loading loading-spinner loading-lg text-primary" />
-			<p class="mt-4 font-semibold text-base-content">Compressing image...</p>
+			<p class="mt-4 font-semibold text-base-content">
+				Compressing with Pixo WASM...
+			</p>
 		</div>
 	</div>
 );
@@ -214,37 +165,31 @@ const ErrorToast = ({
 
 // Main Component
 
-const ImageCompressor = () => {
-	// State
+export const PixoCompressor = () => {
 	const [file, setFile] = useState<File | null>(null);
-	const [quality, setQuality] = useState(DEFAULT_QUALITY);
+	const [quality, setQuality] = useState(PIXO_DEFAULT_QUALITY);
 	const [originalUrl, setOriginalUrl] = useState("");
 	const [originalDimensions, setOriginalDimensions] = useState<{
 		width: number;
 		height: number;
 	} | null>(null);
-	const [result, setResult] = useState<CompressionResult | null>(null);
+	const [result, setResult] = useState<PixoResult | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isDragging, setIsDragging] = useState(false);
 	const [error, setError] = useState("");
 
-	// Refs
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const resultRef = useRef<CompressionResult | null>(null);
 
 	// Effect: Create/cleanup original preview URL
 	useEffect(() => {
 		if (!file) return;
-
 		const url = URL.createObjectURL(file);
 		setOriginalUrl(url);
 		setOriginalDimensions(null);
-
 		return () => URL.revokeObjectURL(url);
 	}, [file]);
 
-	// Effect: Compress when file/quality/dimensions change (debounced).
-	// Waits for originalDimensions so the worker knows the resize target.
+	// Effect: Compress when file/quality/dimensions change (debounced)
 	useEffect(() => {
 		if (!file || !originalDimensions) return;
 
@@ -253,20 +198,14 @@ const ImageCompressor = () => {
 
 		const timer = setTimeout(async () => {
 			try {
-				const newResult = await compressImage(
+				const newResult = await compressWithPixo(
 					file,
 					quality,
 					originalDimensions.width,
 					originalDimensions.height,
 				);
 				if (!cancelled) {
-					if (resultRef.current?.compressedUrl) {
-						URL.revokeObjectURL(resultRef.current.compressedUrl);
-					}
-					resultRef.current = newResult;
 					setResult(newResult);
-				} else {
-					URL.revokeObjectURL(newResult.compressedUrl);
 				}
 			} catch (err) {
 				if (!cancelled) {
@@ -308,26 +247,23 @@ const ImageCompressor = () => {
 	};
 
 	const handleDownload = (): void => {
-		if (result?.compressedUrl && file) {
-			downloadFile(result.compressedUrl, generateCompressedFilename(file.name));
+		if (result?.compressedBlob && file) {
+			downloadBlob(
+				result.compressedBlob,
+				generateCompressedFilename(file.name),
+			);
 		}
 	};
 
 	const handleReset = (): void => {
-		if (resultRef.current?.compressedUrl) {
-			URL.revokeObjectURL(resultRef.current.compressedUrl);
-			resultRef.current = null;
-		}
 		setFile(null);
 		setOriginalUrl("");
 		setOriginalDimensions(null);
 		setResult(null);
-		setQuality(DEFAULT_QUALITY);
+		setQuality(PIXO_DEFAULT_QUALITY);
 		setError("");
 		if (fileInputRef.current) fileInputRef.current.value = "";
 	};
-
-	// JSX
 
 	return (
 		<>
@@ -338,7 +274,16 @@ const ImageCompressor = () => {
 						Upload Your Image
 					</h2>
 					<p class="text-center text-base-content/70 text-sm md:text-base">
-						Compress JPG, JPEG, and PNG images locally – no upload to server
+						Compress with{" "}
+						<a
+							href="https://docs.rs/pixo/latest/pixo/guides/wasm/index.html"
+							target="_blank"
+							rel="noopener noreferrer"
+							class="link link-primary"
+						>
+							Pixo WASM
+						</a>{" "}
+						— Rust-powered encoder compiled to WebAssembly
 					</p>
 
 					{/* Drop Zone */}
@@ -395,92 +340,92 @@ const ImageCompressor = () => {
 						</p>
 					</button>
 
-					{/* Quality Slider */}
+					{/* Quality Slider — 1-100 integer for Pixo */}
 					<div class="mt-6">
-						<label class="label" for="quality-slider">
-							<span class="label-text font-semibold">Compression Quality</span>
+						<label class="label" for="pixo-quality-slider">
+							<span class="label-text font-semibold">JPEG Quality</span>
 							<span class="label-text-alt font-bold text-primary">
-								{Math.round(quality * 100)}%
+								{quality}
 							</span>
 						</label>
 						<input
-							id="quality-slider"
+							id="pixo-quality-slider"
 							type="range"
-							min="0.1"
-							max="1"
-							step="0.1"
+							min={PIXO_MIN_QUALITY}
+							max={PIXO_MAX_QUALITY}
+							step="1"
 							value={String(quality)}
 							onInput={(e: Event) => {
 								const val = (e.target as HTMLInputElement).value;
-								setQuality(parseFloat(val));
+								setQuality(parseInt(val, 10));
 							}}
 							class="range range-primary"
 						/>
 						<div class="mt-1 flex w-full justify-between px-2 text-base-content/50 text-xs">
-							<span>Low</span>
-							<span>Medium</span>
-							<span>High</span>
+							<span>1</span>
+							<span>50</span>
+							<span>100</span>
 						</div>
 					</div>
 				</div>
 			</div>
 
-			{/* Preview Section */}
+			{/* Preview + Stats */}
 			{file && (
 				<div class="mt-8">
-					<div class="grid grid-cols-1 gap-4 md:gap-6 lg:grid-cols-2">
-						{/* Original Image Card */}
-						<div class="card bg-base-100 shadow-xl">
-							<div class="card-body p-4 md:p-6">
-								<h3 class="card-title text-base md:text-lg">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										class="h-5 w-5 text-warning"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										aria-hidden="true"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
-											clip-rule="evenodd"
-										/>
-									</svg>
-									Original
-								</h3>
-								<div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
-									<img
-										src={originalUrl}
-										onLoad={(e: Event) => {
-											const img = e.target as HTMLImageElement;
-											setOriginalDimensions({
-												width: img.naturalWidth,
-												height: img.naturalHeight,
-											});
-										}}
-										class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
-										alt="Original file preview"
+					{/* Original Preview — lightweight <img> with blob URL */}
+					<div class="card bg-base-100 shadow-xl">
+						<div class="card-body p-4 md:p-6">
+							<h3 class="card-title text-base md:text-lg">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									class="h-5 w-5 text-warning"
+									viewBox="0 0 20 20"
+									fill="currentColor"
+									aria-hidden="true"
+								>
+									<path
+										fill-rule="evenodd"
+										d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
+										clip-rule="evenodd"
 									/>
-								</div>
-								<div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
+								</svg>
+								Original Preview
+							</h3>
+							<div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
+								<img
+									src={originalUrl}
+									onLoad={(e: Event) => {
+										const img = e.target as HTMLImageElement;
+										setOriginalDimensions({
+											width: img.naturalWidth,
+											height: img.naturalHeight,
+										});
+									}}
+									class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
+									alt="Original file preview"
+								/>
+							</div>
+							<div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
+								<p>
+									<strong>Original Size:</strong> {formatFileSize(file.size)}
+								</p>
+								{originalDimensions && (
 									<p>
-										<strong>Original Size:</strong> {formatFileSize(file.size)}
+										<strong>Dimensions:</strong> {originalDimensions.width} x{" "}
+										{originalDimensions.height}
 									</p>
-									{originalDimensions && (
-										<p>
-											<strong>Dimensions:</strong> {originalDimensions.width} x{" "}
-											{originalDimensions.height}
-										</p>
-									)}
-									<p>
-										<strong>Type:</strong> {file.type}
-									</p>
-								</div>
+								)}
+								<p>
+									<strong>Type:</strong> {file.type}
+								</p>
 							</div>
 						</div>
+					</div>
 
-						{/* Compressed Image Card */}
-						<div class="card bg-base-100 shadow-xl">
+					{/* Compression Stats — numbers only, no result preview */}
+					{result && (
+						<div class="card mt-4 bg-base-100 shadow-xl md:mt-6">
 							<div class="card-body p-4 md:p-6">
 								<h3 class="card-title text-base md:text-lg">
 									<svg
@@ -496,43 +441,21 @@ const ImageCompressor = () => {
 											clip-rule="evenodd"
 										/>
 									</svg>
-									Compressed
+									Compression Result
 								</h3>
-								<div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
-									{result ? (
-										<img
-											src={result.compressedUrl}
-											class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
-											alt="Compressed result preview"
-										/>
-									) : (
-										<span class="loading loading-spinner loading-md text-primary" />
-									)}
-								</div>
-								{result && (
-									<div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
-										<p>
-											<strong>Compressed Size:</strong>{" "}
-											{formatFileSize(result.compressedSize)}
-										</p>
-										<p>
-											<strong>Dimensions:</strong> {result.width} x{" "}
-											{result.height}
-										</p>
-									</div>
-								)}
-							</div>
-						</div>
-					</div>
-
-					{/* Stats */}
-					{result && (
-						<div class="card mt-4 bg-base-100 shadow-xl md:mt-6">
-							<div class="card-body p-4 md:p-6">
 								<div class="stats stats-vertical md:stats-horizontal w-full shadow">
 									<div class="stat">
+										<div class="stat-title">Compressed Size</div>
+										<div class="stat-value text-accent text-lg md:text-2xl">
+											{formatFileSize(result.compressedSize)}
+										</div>
+										<div class="stat-desc">
+											Output: {result.width} x {result.height}
+										</div>
+									</div>
+									<div class="stat">
 										<div class="stat-title">Compression Ratio</div>
-										<div class="stat-value text-primary">
+										<div class="stat-value text-lg text-primary md:text-2xl">
 											{getCompressionRatio(
 												result.originalSize,
 												result.compressedSize,
@@ -543,7 +466,7 @@ const ImageCompressor = () => {
 									</div>
 									<div class="stat">
 										<div class="stat-title">Space Saved</div>
-										<div class="stat-value text-secondary">
+										<div class="stat-value text-lg text-secondary md:text-2xl">
 											{formatFileSize(
 												Math.max(
 													0,
@@ -618,8 +541,7 @@ const ImageCompressor = () => {
 	);
 };
 
-// Mount the client component into the #root element
-const root = document.getElementById("root");
-if (root) {
-	render(<ImageCompressor />, root);
+const pixoRoot = document.getElementById("pixo-root");
+if (pixoRoot) {
+	render(<PixoCompressor />, pixoRoot);
 }

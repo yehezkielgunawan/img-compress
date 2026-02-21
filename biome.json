@@ -64,7 +64,11 @@
   },
   "overrides": [
     {
-      "includes": ["src/app/globals.css", "*.d.ts"],
+      "includes": [
+        "src/app/globals.css",
+        "*.d.ts",
+        "src/utils/pixo-wasm/pixo.js"
+      ],
       "linter": {
         "enabled": false
       }
