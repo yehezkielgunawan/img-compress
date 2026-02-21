@@ -9,6 +9,13 @@ export const PIXO_MIN_QUALITY = 1;
 export const PIXO_MAX_QUALITY = 100;
 
 /**
+ * Progressive max-dimension list for pixel extraction.
+ * On desktop 4096 is fine; on mobile the browser may OOM, so we retry
+ * at 2048, then 1024.  Each halving reduces decoded-pixel memory by 4×.
+ */
+export const DECODE_MAX_DIMENSIONS = [4096, 2048, 1024] as const;
+
+/**
  * Convert RGBA pixel data to RGB by stripping the alpha channel.
  * Pixo's JPEG encoder expects 3-channel RGB input, but Canvas
  * `getImageData()` returns 4-channel RGBA.
