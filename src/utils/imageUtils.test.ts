@@ -8,6 +8,7 @@ import {
 	formatFileSize,
 	generateCompressedFilename,
 	getCompressionRatio,
+	getImageDimensionsFromHeader,
 	isFileSizeValid,
 	isFileTypeSupported,
 	isValidQuality,
@@ -343,6 +344,105 @@ describe("imageUtils", () => {
 			const original = 10 * 1024 * 1024; // 10 MB
 			const compressed = 2 * 1024 * 1024; // 2 MB
 			expect(calculateBytesSaved(original, compressed)).toBe(8 * 1024 * 1024);
+		});
+	});
+
+	describe("getImageDimensionsFromHeader", () => {
+		const makeFile = (bytes: number[], type: string): File => {
+			return new File([new Uint8Array(bytes)], "test", { type });
+		};
+
+		it("should read PNG dimensions from header", async () => {
+			const pngHeader = [
+				0x89,
+				0x50,
+				0x4e,
+				0x47,
+				0x0d,
+				0x0a,
+				0x1a,
+				0x0a,
+				0x00,
+				0x00,
+				0x00,
+				0x0d,
+				0x49,
+				0x48,
+				0x44,
+				0x52,
+				0x00,
+				0x00,
+				0x03,
+				0x20, // width = 800
+				0x00,
+				0x00,
+				0x02,
+				0x58, // height = 600
+				0x08,
+				0x02,
+				0x00,
+				0x00,
+			];
+			const file = makeFile(pngHeader, "image/png");
+			const dims = await getImageDimensionsFromHeader(file);
+			expect(dims).toEqual({ width: 800, height: 600 });
+		});
+
+		it("should read JPEG dimensions from SOF0 marker", async () => {
+			const jpegHeader = [
+				0xff,
+				0xd8, // SOI
+				0xff,
+				0xe0, // APP0 marker
+				0x00,
+				0x10, // APP0 length = 16
+				...new Array(14).fill(0), // APP0 data
+				0xff,
+				0xc0, // SOF0 marker
+				0x00,
+				0x11, // SOF0 length
+				0x08, // precision
+				0x01,
+				0xf4, // height = 500
+				0x02,
+				0xbc, // width = 700
+			];
+			const file = makeFile(jpegHeader, "image/jpeg");
+			const dims = await getImageDimensionsFromHeader(file);
+			expect(dims).toEqual({ width: 700, height: 500 });
+		});
+
+		it("should read JPEG dimensions from SOF2 (progressive) marker", async () => {
+			const jpegHeader = [
+				0xff,
+				0xd8,
+				0xff,
+				0xc2, // SOF2 marker (progressive)
+				0x00,
+				0x11,
+				0x08,
+				0x04,
+				0x00, // height = 1024
+				0x06,
+				0x00, // width = 1536
+			];
+			const file = makeFile(jpegHeader, "image/jpeg");
+			const dims = await getImageDimensionsFromHeader(file);
+			expect(dims).toEqual({ width: 1536, height: 1024 });
+		});
+
+		it("should throw for unsupported file format", async () => {
+			const file = makeFile([0x47, 0x49, 0x46], "image/gif");
+			await expect(getImageDimensionsFromHeader(file)).rejects.toThrow(
+				"Could not read image dimensions from file header",
+			);
+		});
+
+		it("should throw for empty file", async () => {
+			const file = makeFile([], "image/png");
+			await expect(getImageDimensionsFromHeader(file)).rejects.toThrow(
+				"Could not read image dimensions from file header",
+			);
 		});
 	});
 });

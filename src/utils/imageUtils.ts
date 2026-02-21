@@ -73,6 +73,58 @@ export const calculateScaledDimensions = (
 };
 
 /**
+ * Read image dimensions from PNG/JPEG file headers without decoding the image.
+ * Only reads the first few KB of the file — virtually zero memory overhead.
+ * Works even on mobile devices that can't decode the full image.
+ */
+export const getImageDimensionsFromHeader = async (
+	file: File,
+): Promise<ImageDimensions> => {
+	const slice = file.slice(0, 65536);
+	const buffer = await slice.arrayBuffer();
+	const view = new DataView(buffer);
+
+	if (
+		buffer.byteLength >= 24 &&
+		view.getUint8(0) === 0x89 &&
+		view.getUint8(1) === 0x50
+	) {
+		const width = view.getUint32(16, false);
+		const height = view.getUint32(20, false);
+		return { width, height };
+	}
+
+	if (
+		buffer.byteLength >= 2 &&
+		view.getUint8(0) === 0xff &&
+		view.getUint8(1) === 0xd8
+	) {
+		let offset = 2;
+		while (offset + 4 < buffer.byteLength) {
+			if (view.getUint8(offset) !== 0xff) break;
+			const marker = view.getUint8(offset + 1);
+			if (
+				marker >= 0xc0 &&
+				marker <= 0xcf &&
+				marker !== 0xc4 &&
+				marker !== 0xc8 &&
+				marker !== 0xcc
+			) {
+				if (offset + 9 <= buffer.byteLength) {
+					const height = view.getUint16(offset + 5, false);
+					const width = view.getUint16(offset + 7, false);
+					return { width, height };
+				}
+			}
+			const segmentLength = view.getUint16(offset + 2, false);
+			offset += 2 + segmentLength;
+		}
+	}
+
+	throw new Error("Could not read image dimensions from file header");
+};
+
+/**
  * Format file size in human readable format
  * @param bytes - Size in bytes
  * @returns Formatted string (e.g., "1.5 MB")
