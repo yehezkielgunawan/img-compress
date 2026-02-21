@@ -9,16 +9,19 @@ import {
 	formatFileSize,
 	generateCompressedFilename,
 	getCompressionRatio,
+	getImageDimensionsFromHeader,
 	isFileSizeValid,
 	isFileTypeSupported,
 	MAX_CANVAS_DIMENSION,
 	MAX_FILE_SIZE,
 } from "./utils/imageUtils";
 import initPixo, { encodeJpeg } from "./utils/pixo-wasm/pixo";
-
-const PIXO_DEFAULT_QUALITY = 85;
-const PIXO_MIN_QUALITY = 1;
-const PIXO_MAX_QUALITY = 100;
+import {
+	PIXO_DEFAULT_QUALITY,
+	PIXO_MAX_QUALITY,
+	PIXO_MIN_QUALITY,
+	rgbaToRgb,
+} from "./utils/pixoUtils";
 
 interface PixoResult {
 	compressedBlob: Blob;
@@ -35,17 +38,6 @@ const ensurePixoInit = (): Promise<void> => {
 		pixoReady = initPixo().then(() => undefined);
 	}
 	return pixoReady;
-};
-
-const rgbaToRgb = (rgba: Uint8ClampedArray): Uint8Array => {
-	const pixelCount = rgba.length / 4;
-	const rgb = new Uint8Array(pixelCount * 3);
-	for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
-		rgb[j] = rgba[i];
-		rgb[j + 1] = rgba[i + 1];
-		rgb[j + 2] = rgba[i + 2];
-	}
-	return rgb;
 };
 
 /**
@@ -107,7 +99,7 @@ const compressWithPixo = async (
 	);
 
 	const jpegBytes = encodeJpeg(rgb, width, height, 2, quality, 1, true);
-	const blob = new Blob([jpegBytes], { type: "image/jpeg" });
+	const blob = new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" });
 
 	return {
 		compressedBlob: blob,
@@ -176,16 +168,23 @@ export const PixoCompressor = () => {
 	const [result, setResult] = useState<PixoResult | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isDragging, setIsDragging] = useState(false);
+	const [previewFailed, setPreviewFailed] = useState(false);
 	const [error, setError] = useState("");
 
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	// Effect: Create/cleanup original preview URL
+	// Effect: Create preview URL + read dimensions from file header (decoupled from preview)
 	useEffect(() => {
 		if (!file) return;
 		const url = URL.createObjectURL(file);
 		setOriginalUrl(url);
 		setOriginalDimensions(null);
+		setPreviewFailed(false);
+
+		getImageDimensionsFromHeader(file)
+			.then((dims) => setOriginalDimensions(dims))
+			.catch(() => {});
+
 		return () => URL.revokeObjectURL(url);
 	}, [file]);
 
@@ -261,6 +260,7 @@ export const PixoCompressor = () => {
 		setOriginalDimensions(null);
 		setResult(null);
 		setQuality(PIXO_DEFAULT_QUALITY);
+		setPreviewFailed(false);
 		setError("");
 		if (fileInputRef.current) fileInputRef.current.value = "";
 	};
@@ -342,11 +342,9 @@ export const PixoCompressor = () => {
 
 					{/* Quality Slider — 1-100 integer for Pixo */}
 					<div class="mt-6">
-						<label class="label" for="pixo-quality-slider">
-							<span class="label-text font-semibold">JPEG Quality</span>
-							<span class="label-text-alt font-bold text-primary">
-								{quality}
-							</span>
+						<label class="label flex gap-8" for="pixo-quality-slider">
+							<span class="font-semibold">JPEG Quality</span>
+							<span class="font-bold text-primary">{quality}%</span>
 						</label>
 						<input
 							id="pixo-quality-slider"
@@ -361,11 +359,6 @@ export const PixoCompressor = () => {
 							}}
 							class="range range-primary"
 						/>
-						<div class="mt-1 flex w-full justify-between px-2 text-base-content/50 text-xs">
-							<span>1</span>
-							<span>50</span>
-							<span>100</span>
-						</div>
 					</div>
 				</div>
 			</div>
@@ -393,18 +386,45 @@ export const PixoCompressor = () => {
 								Original Preview
 							</h3>
 							<div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
-								<img
-									src={originalUrl}
-									onLoad={(e: Event) => {
-										const img = e.target as HTMLImageElement;
-										setOriginalDimensions({
-											width: img.naturalWidth,
-											height: img.naturalHeight,
-										});
-									}}
-									class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
-									alt="Original file preview"
-								/>
+								{previewFailed ? (
+									<div class="text-center text-base-content/50">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											class="mx-auto h-12 w-12"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+											aria-hidden="true"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+											/>
+										</svg>
+										<p class="mt-2 text-sm">
+											Preview unavailable (image too large for display)
+										</p>
+										<p class="text-xs">Compression still works normally</p>
+									</div>
+								) : (
+									<img
+										src={originalUrl}
+										onLoad={(e: Event) => {
+											const img = e.target as HTMLImageElement;
+											if (!originalDimensions) {
+												setOriginalDimensions({
+													width: img.naturalWidth,
+													height: img.naturalHeight,
+												});
+											}
+										}}
+										onError={() => setPreviewFailed(true)}
+										class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
+										alt="Original file preview"
+									/>
+								)}
 							</div>
 							<div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
 								<p>
