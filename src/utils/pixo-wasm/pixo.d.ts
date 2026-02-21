@@ -28,7 +28,15 @@ export function bytesPerPixel(color_type: number): number;
  *
  * JPEG file bytes as Uint8Array.
  */
-export function encodeJpeg(data: Uint8Array, width: number, height: number, color_type: number, quality: number, preset: number, subsampling_420: boolean): Uint8Array;
+export function encodeJpeg(
+	data: Uint8Array,
+	width: number,
+	height: number,
+	color_type: number,
+	quality: number,
+	preset: number,
+	subsampling_420: boolean,
+): Uint8Array;
 
 /**
  * Encode raw pixel data as PNG.
@@ -46,7 +54,14 @@ export function encodeJpeg(data: Uint8Array, width: number, height: number, colo
  *
  * PNG file bytes as Uint8Array.
  */
-export function encodePng(data: Uint8Array, width: number, height: number, color_type: number, preset: number, lossy: boolean): Uint8Array;
+export function encodePng(
+	data: Uint8Array,
+	width: number,
+	height: number,
+	color_type: number,
+	preset: number,
+	lossy: boolean,
+): Uint8Array;
 
 /**
  * Resize an image to new dimensions.
@@ -65,39 +80,88 @@ export function encodePng(data: Uint8Array, width: number, height: number, color
  *
  * Resized pixel data as Uint8Array with the same color type.
  */
-export function resizeImage(data: Uint8Array, src_width: number, src_height: number, dst_width: number, dst_height: number, color_type: number, algorithm: number): Uint8Array;
+export function resizeImage(
+	data: Uint8Array,
+	src_width: number,
+	src_height: number,
+	dst_width: number,
+	dst_height: number,
+	color_type: number,
+	algorithm: number,
+): Uint8Array;
 
-export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+export type InitInput =
+	| RequestInfo
+	| URL
+	| Response
+	| BufferSource
+	| WebAssembly.Module;
 
 export interface InitOutput {
-  readonly memory: WebAssembly.Memory;
-  readonly bytesPerPixel: (a: number, b: number) => void;
-  readonly encodeJpeg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-  readonly encodePng: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-  readonly resizeImage: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-  readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
-  readonly __wbindgen_export: (a: number, b: number) => number;
-  readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
+	readonly memory: WebAssembly.Memory;
+	readonly bytesPerPixel: (a: number, b: number) => void;
+	readonly encodeJpeg: (
+		a: number,
+		b: number,
+		c: number,
+		d: number,
+		e: number,
+		f: number,
+		g: number,
+		h: number,
+		i: number,
+	) => void;
+	readonly encodePng: (
+		a: number,
+		b: number,
+		c: number,
+		d: number,
+		e: number,
+		f: number,
+		g: number,
+		h: number,
+	) => void;
+	readonly resizeImage: (
+		a: number,
+		b: number,
+		c: number,
+		d: number,
+		e: number,
+		f: number,
+		g: number,
+		h: number,
+		i: number,
+	) => void;
+	readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+	readonly __wbindgen_export: (a: number, b: number) => number;
+	readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
 
 /**
-* Instantiates the given `module`, which can either be bytes or
-* a precompiled `WebAssembly.Module`.
-*
-* @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
-*
-* @returns {InitOutput}
-*/
-export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+ * Instantiates the given `module`, which can either be bytes or
+ * a precompiled `WebAssembly.Module`.
+ *
+ * @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+ *
+ * @returns {InitOutput}
+ */
+export function initSync(
+	module: { module: SyncInitInput } | SyncInitInput,
+): InitOutput;
 
 /**
-* If `module_or_path` is {RequestInfo} or {URL}, makes a request and
-* for everything else, calls `WebAssembly.instantiate` directly.
-*
-* @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
-*
-* @returns {Promise<InitOutput>}
-*/
-export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+ *
+ * @returns {Promise<InitOutput>}
+ */
+export default function __wbg_init(
+	module_or_path?:
+		| { module_or_path: InitInput | Promise<InitInput> }
+		| InitInput
+		| Promise<InitInput>,
+): Promise<InitOutput>;
