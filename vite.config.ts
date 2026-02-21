@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
           'src/index.tsx',
           'src/client.tsx',
           'src/compressWorker.ts',
+          'src/pixoClient.tsx',
           '**/*.d.ts',
           'node_modules/**',
         ],

@@ -72,12 +72,45 @@ const Footer = () => (
   </footer>
 );
 
+const PageNav = ({ active }: { active: "canvas" | "pixo" }) => (
+  <div role="tablist" class="tabs tabs-boxed mb-6 justify-center">
+    <a
+      href="/"
+      role="tab"
+      class={`tab ${active === "canvas" ? "tab-active" : ""}`}
+    >
+      Canvas
+    </a>
+    <a
+      href="/pixo"
+      role="tab"
+      class={`tab ${active === "pixo" ? "tab-active" : ""}`}
+    >
+      Pixo WASM
+    </a>
+  </div>
+);
+
 app.get("/", (c) => {
   return c.render(
     <div class="flex min-h-screen flex-col">
       <Header />
       <main class="container mx-auto max-w-5xl flex-1 px-4 py-6 md:py-8">
+        <PageNav active="canvas" />
         <div id="root"></div>
+      </main>
+      <Footer />
+    </div>,
+  );
+});
+
+app.get("/pixo", (c) => {
+  return c.render(
+    <div class="flex min-h-screen flex-col">
+      <Header />
+      <main class="container mx-auto max-w-5xl flex-1 px-4 py-6 md:py-8">
+        <PageNav active="pixo" />
+        <div id="pixo-root"></div>
       </main>
       <Footer />
     </div>,
