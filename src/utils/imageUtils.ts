@@ -74,13 +74,18 @@ export const calculateScaledDimensions = (
 
 /**
  * Read image dimensions from PNG/JPEG file headers without decoding the image.
- * Only reads the first few KB of the file — virtually zero memory overhead.
+ * Reads a configurable slice of the data — virtually zero memory overhead.
  * Works even on mobile devices that can't decode the full image.
+ *
+ * @param data - A Blob (or File) containing the image data
+ * @param maxBytes - Maximum bytes to read (default: 256KB).
+ *   Pass `data.size` to scan the entire compressed data as a fallback.
  */
 export const getImageDimensionsFromHeader = async (
-	file: File,
+	data: Blob,
+	maxBytes: number = 262144,
 ): Promise<ImageDimensions> => {
-	const slice = file.slice(0, 65536);
+	const slice = data.slice(0, maxBytes);
 	const buffer = await slice.arrayBuffer();
 	const view = new DataView(buffer);
 

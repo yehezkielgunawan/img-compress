@@ -5,7 +5,7 @@ import {
 } from "./utils/imageUtils";
 
 export interface CompressRequest {
-	file: File;
+	file: Blob;
 	quality: number;
 	originalWidth: number;
 	originalHeight: number;
