@@ -8,33 +8,33 @@
 import { useEffect, useRef, useState } from "hono/jsx";
 import { render } from "hono/jsx/dom";
 import type {
-  CompressError,
-  CompressRequest,
-  CompressSuccess,
+	CompressError,
+	CompressRequest,
+	CompressSuccess,
 } from "./compressWorker";
 import {
-  calculateBytesSaved,
-  calculateScaledDimensions,
-  clampQuality,
-  DEFAULT_QUALITY,
-  formatFileSize,
-  generateCompressedFilename,
-  getCompressionRatio,
-  getImageDimensionsFromHeader,
-  isFileSizeValid,
-  isFileTypeSupported,
-  MAX_CANVAS_DIMENSION,
-  MAX_FILE_SIZE,
+	calculateBytesSaved,
+	calculateScaledDimensions,
+	clampQuality,
+	DEFAULT_QUALITY,
+	formatFileSize,
+	generateCompressedFilename,
+	getCompressionRatio,
+	getImageDimensionsFromHeader,
+	isFileSizeValid,
+	isFileTypeSupported,
+	MAX_CANVAS_DIMENSION,
+	MAX_FILE_SIZE,
 } from "./utils/imageUtils";
 
 // Types
 
 interface CompressionResult {
-  compressedUrl: string;
-  compressedSize: number;
-  originalSize: number;
-  width: number;
-  height: number;
+	compressedUrl: string;
+	compressedSize: number;
+	originalSize: number;
+	width: number;
+	height: number;
 }
 
 /**
@@ -44,38 +44,38 @@ interface CompressionResult {
  * touch memory. Then OffscreenCanvas exports JPEG off the main thread.
  */
 const compressInWorker = (
-  file: File,
-  quality: number,
-  originalWidth: number,
-  originalHeight: number,
+	data: Blob,
+	quality: number,
+	originalWidth: number,
+	originalHeight: number,
 ): Promise<{ blob: Blob; width: number; height: number }> => {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL("./compressWorker.ts", import.meta.url), {
-      type: "module",
-    });
+	return new Promise((resolve, reject) => {
+		const worker = new Worker(new URL("./compressWorker.ts", import.meta.url), {
+			type: "module",
+		});
 
-    worker.onmessage = (e: MessageEvent<CompressSuccess | CompressError>) => {
-      worker.terminate();
-      if ("error" in e.data) {
-        reject(new Error(e.data.error));
-      } else {
-        resolve(e.data);
-      }
-    };
+		worker.onmessage = (e: MessageEvent<CompressSuccess | CompressError>) => {
+			worker.terminate();
+			if ("error" in e.data) {
+				reject(new Error(e.data.error));
+			} else {
+				resolve(e.data);
+			}
+		};
 
-    worker.onerror = (err) => {
-      worker.terminate();
-      reject(new Error(err.message || "Worker failed"));
-    };
+		worker.onerror = (err) => {
+			worker.terminate();
+			reject(new Error(err.message || "Worker failed"));
+		};
 
-    const msg: CompressRequest = {
-      file,
-      quality,
-      originalWidth,
-      originalHeight,
-    };
-    worker.postMessage(msg);
-  });
+		const msg: CompressRequest = {
+			file: data,
+			quality,
+			originalWidth,
+			originalHeight,
+		};
+		worker.postMessage(msg);
+	});
 };
 
 /**
@@ -83,572 +83,585 @@ const compressInWorker = (
  * Uses <img> + decode() for broadest codec support, then a regular canvas.
  */
 const compressFallback = async (
-  file: File,
-  quality: number,
-  originalWidth: number,
-  originalHeight: number,
+	data: Blob,
+	quality: number,
+	originalWidth: number,
+	originalHeight: number,
 ): Promise<{ blob: Blob; width: number; height: number }> => {
-  const { width, height } = calculateScaledDimensions(
-    originalWidth,
-    originalHeight,
-    MAX_CANVAS_DIMENSION,
-  );
+	const { width, height } = calculateScaledDimensions(
+		originalWidth,
+		originalHeight,
+		MAX_CANVAS_DIMENSION,
+	);
 
-  const blobUrl = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    img.src = blobUrl;
-    await img.decode();
+	const blobUrl = URL.createObjectURL(data);
+	try {
+		const img = new Image();
+		img.src = blobUrl;
+		await img.decode();
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to get canvas context");
+		const canvas = document.createElement("canvas");
+		canvas.width = width;
+		canvas.height = height;
+		const ctx = canvas.getContext("2d");
+		if (!ctx) throw new Error("Failed to get canvas context");
 
-    ctx.drawImage(img, 0, 0, width, height);
+		ctx.drawImage(img, 0, 0, width, height);
 
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error("Failed to export canvas"))),
-        "image/jpeg",
-        clampQuality(quality),
-      );
-    });
+		const blob = await new Promise<Blob>((resolve, reject) => {
+			canvas.toBlob(
+				(b) => (b ? resolve(b) : reject(new Error("Failed to export canvas"))),
+				"image/jpeg",
+				clampQuality(quality),
+			);
+		});
 
-    return { blob, width, height };
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
+		return { blob, width, height };
+	} finally {
+		URL.revokeObjectURL(blobUrl);
+	}
 };
 
 /**
  * Compress an image: tries Web Worker first, falls back to main thread.
  */
 const compressImage = async (
-  file: File,
-  quality: number,
-  originalWidth: number,
-  originalHeight: number,
+	data: Blob,
+	quality: number,
+	originalWidth: number,
+	originalHeight: number,
 ): Promise<CompressionResult> => {
-  if (!isFileTypeSupported(file.type)) {
-    throw new Error("Unsupported file type. Please use JPG, JPEG, or PNG.");
-  }
+	if (!isFileTypeSupported(data.type)) {
+		throw new Error("Unsupported file type. Please use JPG, JPEG, or PNG.");
+	}
 
-  if (!isFileSizeValid(file.size)) {
-    throw new Error(
-      `File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`,
-    );
-  }
+	if (!isFileSizeValid(data.size)) {
+		throw new Error(
+			`File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`,
+		);
+	}
 
-  let result: { blob: Blob; width: number; height: number };
+	let result: { blob: Blob; width: number; height: number };
 
-  try {
-    result = await compressInWorker(
-      file,
-      quality,
-      originalWidth,
-      originalHeight,
-    );
-  } catch {
-    result = await compressFallback(
-      file,
-      quality,
-      originalWidth,
-      originalHeight,
-    );
-  }
+	try {
+		result = await compressInWorker(
+			data,
+			quality,
+			originalWidth,
+			originalHeight,
+		);
+	} catch {
+		result = await compressFallback(
+			data,
+			quality,
+			originalWidth,
+			originalHeight,
+		);
+	}
 
-  return {
-    compressedUrl: URL.createObjectURL(result.blob),
-    compressedSize: result.blob.size,
-    originalSize: file.size,
-    width: result.width,
-    height: result.height,
-  };
+	return {
+		compressedUrl: URL.createObjectURL(result.blob),
+		compressedSize: result.blob.size,
+		originalSize: data.size,
+		width: result.width,
+		height: result.height,
+	};
 };
 
 /**
  * Trigger download of a file from an object URL
  */
 const downloadFile = (url: string, filename: string): void => {
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	document.body.removeChild(link);
 };
 
 // Sub-components
 
 const LoadingOverlay = () => (
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-base-300/80">
-    <div class="text-center">
-      <span class="loading loading-spinner loading-lg text-primary" />
-      <p class="mt-4 font-semibold text-base-content">Compressing image...</p>
-    </div>
-  </div>
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-base-300/80">
+		<div class="text-center">
+			<span class="loading loading-spinner loading-lg text-primary" />
+			<p class="mt-4 font-semibold text-base-content">Compressing image...</p>
+		</div>
+	</div>
 );
 
 const ErrorToast = ({
-  message,
-  onDismiss,
+	message,
+	onDismiss,
 }: {
-  message: string;
-  onDismiss: () => void;
+	message: string;
+	onDismiss: () => void;
 }) => {
-  useEffect(() => {
-    const timer = setTimeout(onDismiss, 3000);
-    return () => clearTimeout(timer);
-  }, [message]);
+	useEffect(() => {
+		const timer = setTimeout(onDismiss, 3000);
+		return () => clearTimeout(timer);
+	}, [message]);
 
-  return (
-    <div class="toast toast-top toast-center z-50">
-      <div class="alert alert-error">
-        <span>{message}</span>
-      </div>
-    </div>
-  );
+	return (
+		<div class="toast toast-top toast-center z-50">
+			<div class="alert alert-error">
+				<span>{message}</span>
+			</div>
+		</div>
+	);
 };
 
 // Main Component
 
 const ImageCompressor = () => {
-  // State
-  const [file, setFile] = useState<File | null>(null);
-  const [quality, setQuality] = useState(DEFAULT_QUALITY);
-  const [originalUrl, setOriginalUrl] = useState("");
-  const [originalDimensions, setOriginalDimensions] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
-  const [result, setResult] = useState<CompressionResult | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const [error, setError] = useState("");
+	// State
+	const [file, setFile] = useState<File | null>(null);
+	const [fileData, setFileData] = useState<Blob | null>(null);
+	const [quality, setQuality] = useState(DEFAULT_QUALITY);
+	const [originalUrl, setOriginalUrl] = useState("");
+	const [originalDimensions, setOriginalDimensions] = useState<{
+		width: number;
+		height: number;
+	} | null>(null);
+	const [result, setResult] = useState<CompressionResult | null>(null);
+	const [isLoading, setIsLoading] = useState(false);
+	const [isDragging, setIsDragging] = useState(false);
+	const [previewFailed, setPreviewFailed] = useState(false);
+	const [error, setError] = useState("");
 
-  // Refs
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const resultRef = useRef<CompressionResult | null>(null);
+	// Refs
+	const fileInputRef = useRef<HTMLInputElement>(null);
+	const resultRef = useRef<CompressionResult | null>(null);
 
-  // Effect: Create preview URL + read dimensions from file header (decoupled from preview)
-  useEffect(() => {
-    if (!file) return;
+	// Effect: Create preview URL + read dimensions from file header (decoupled from preview)
+	useEffect(() => {
+		if (!fileData) return;
 
-    const url = URL.createObjectURL(file);
-    setOriginalUrl(url);
-    setOriginalDimensions(null);
-    setPreviewFailed(false);
+		const url = URL.createObjectURL(fileData);
+		setOriginalUrl(url);
+		setOriginalDimensions(null);
+		setPreviewFailed(false);
 
-    getImageDimensionsFromHeader(file)
-      .then((dims) => setOriginalDimensions(dims))
-      .catch(() => {});
+		getImageDimensionsFromHeader(fileData)
+			.then((dims) => setOriginalDimensions(dims))
+			.catch(() => {});
 
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+		return () => URL.revokeObjectURL(url);
+	}, [fileData]);
 
-  // Effect: Compress when file/quality/dimensions change (debounced).
-  // Waits for originalDimensions so the worker knows the resize target.
-  useEffect(() => {
-    if (!file || !originalDimensions) return;
+	// Effect: Compress when file data/quality/dimensions change (debounced).
+	// Waits for originalDimensions so the worker knows the resize target.
+	useEffect(() => {
+		if (!fileData || !originalDimensions) return;
 
-    let cancelled = false;
-    setIsLoading(true);
+		let cancelled = false;
+		setIsLoading(true);
 
-    const timer = setTimeout(async () => {
-      try {
-        const newResult = await compressImage(
-          file,
-          quality,
-          originalDimensions.width,
-          originalDimensions.height,
-        );
-        if (!cancelled) {
-          if (resultRef.current?.compressedUrl) {
-            URL.revokeObjectURL(resultRef.current.compressedUrl);
-          }
-          resultRef.current = newResult;
-          setResult(newResult);
-        } else {
-          URL.revokeObjectURL(newResult.compressedUrl);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Compression failed");
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }, 300);
+		const timer = setTimeout(async () => {
+			try {
+				const newResult = await compressImage(
+					fileData,
+					quality,
+					originalDimensions.width,
+					originalDimensions.height,
+				);
+				if (!cancelled) {
+					if (resultRef.current?.compressedUrl) {
+						URL.revokeObjectURL(resultRef.current.compressedUrl);
+					}
+					resultRef.current = newResult;
+					setResult(newResult);
+				} else {
+					URL.revokeObjectURL(newResult.compressedUrl);
+				}
+			} catch (err) {
+				if (!cancelled) {
+					setError(err instanceof Error ? err.message : "Compression failed");
+				}
+			} finally {
+				if (!cancelled) setIsLoading(false);
+			}
+		}, 300);
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [file, quality, originalDimensions]);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [fileData, quality, originalDimensions]);
 
-  // Handlers
+	// Handlers
 
-  const handleFileSelect = (selectedFile: File): void => {
-    if (!isFileTypeSupported(selectedFile.type)) {
-      setError("Unsupported file type. Please use JPG, JPEG, or PNG.");
-      return;
-    }
-    if (!isFileSizeValid(selectedFile.size)) {
-      setError(`File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`);
-      return;
-    }
-    setFile(selectedFile);
-    setResult(null);
-    setError("");
-  };
+	const handleFileSelect = async (selectedFile: File): Promise<void> => {
+		if (!isFileTypeSupported(selectedFile.type)) {
+			setError("Unsupported file type. Please use JPG, JPEG, or PNG.");
+			return;
+		}
+		if (!isFileSizeValid(selectedFile.size)) {
+			setError(`File size exceeds ${formatFileSize(MAX_FILE_SIZE)} limit.`);
+			return;
+		}
 
-  const handleDrop = (e: Event): void => {
-    e.preventDefault();
-    setIsDragging(false);
-    const dragEvent = e as DragEvent;
-    const droppedFile = dragEvent.dataTransfer?.files[0];
-    if (droppedFile) handleFileSelect(droppedFile);
-  };
+		// Read the file into memory immediately while the handle is guaranteed
+		// valid. Mobile browsers can invalidate File handles between async ops.
+		// The in-memory Blob never goes stale.
+		try {
+			const buffer = await selectedFile.arrayBuffer();
+			const blob = new Blob([buffer], { type: selectedFile.type });
+			setFile(selectedFile);
+			setFileData(blob);
+			setResult(null);
+			setError("");
+		} catch {
+			setError("Failed to read file. Please try selecting the file again.");
+		}
+	};
 
-  const handleDownload = (): void => {
-    if (result?.compressedUrl && file) {
-      downloadFile(result.compressedUrl, generateCompressedFilename(file.name));
-    }
-  };
+	const handleDrop = (e: Event): void => {
+		e.preventDefault();
+		setIsDragging(false);
+		const dragEvent = e as DragEvent;
+		const droppedFile = dragEvent.dataTransfer?.files[0];
+		if (droppedFile) handleFileSelect(droppedFile);
+	};
 
-  const handleReset = (): void => {
-    if (resultRef.current?.compressedUrl) {
-      URL.revokeObjectURL(resultRef.current.compressedUrl);
-      resultRef.current = null;
-    }
-    setFile(null);
-    setOriginalUrl("");
-    setOriginalDimensions(null);
-    setResult(null);
-    setQuality(DEFAULT_QUALITY);
-    setPreviewFailed(false);
-    setError("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+	const handleDownload = (): void => {
+		if (result?.compressedUrl && file) {
+			downloadFile(result.compressedUrl, generateCompressedFilename(file.name));
+		}
+	};
 
-  // JSX
+	const handleReset = (): void => {
+		if (resultRef.current?.compressedUrl) {
+			URL.revokeObjectURL(resultRef.current.compressedUrl);
+			resultRef.current = null;
+		}
+		setFile(null);
+		setFileData(null);
+		setOriginalUrl("");
+		setOriginalDimensions(null);
+		setResult(null);
+		setQuality(DEFAULT_QUALITY);
+		setPreviewFailed(false);
+		setError("");
+		if (fileInputRef.current) fileInputRef.current.value = "";
+	};
 
-  return (
-    <>
-      {/* Upload Card */}
-      <div class="card bg-base-100 shadow-xl">
-        <div class="card-body">
-          <h2 class="card-title justify-center text-xl md:text-2xl">
-            Upload Your Image
-          </h2>
-          <p class="text-center text-base-content/70 text-sm md:text-base">
-            Compress JPG, JPEG, and PNG images locally – no upload to server
-          </p>
+	// JSX
 
-          {/* Drop Zone */}
-          <button
-            type="button"
-            class={`mt-4 w-full cursor-pointer rounded-xl border-2 border-dashed bg-transparent p-6 text-center transition-all duration-200 md:p-12 ${
-              isDragging
-                ? "border-primary bg-primary/10"
-                : "border-base-300 hover:border-primary hover:bg-primary/5"
-            }`}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(e: Event) => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={(e: Event) => {
-              e.preventDefault();
-              setIsDragging(false);
-            }}
-            onDrop={handleDrop}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/jpg,image/png"
-              class="hidden"
-              onChange={(e: Event) => {
-                const target = e.target as HTMLInputElement;
-                const selected = target.files?.[0];
-                if (selected) handleFileSelect(selected);
-              }}
-            />
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="mx-auto h-12 w-12 text-base-content/40 md:h-16 md:w-16"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-              />
-            </svg>
-            <p class="mt-4 text-base-content/60 text-sm md:text-base">
-              Drag and drop your image here, or click to select
-            </p>
-            <p class="mt-2 text-base-content/40 text-xs">
-              Supports JPG, JPEG, PNG (Max size: {formatFileSize(MAX_FILE_SIZE)}
-              )
-            </p>
-          </button>
+	return (
+		<>
+			{/* Upload Card */}
+			<div class="card bg-base-100 shadow-xl">
+				<div class="card-body">
+					<h2 class="card-title justify-center text-xl md:text-2xl">
+						Upload Your Image
+					</h2>
+					<p class="text-center text-base-content/70 text-sm md:text-base">
+						Compress JPG, JPEG, and PNG images locally – no upload to server
+					</p>
 
-          {/* Quality Slider */}
-          <div class="mt-6">
-            <label class="label flex gap-8" for="quality-slider">
-              <span class="font-semibold">Compression Quality</span>
-              <span class="font-bold text-primary">
-                {Math.round(quality * 100)}%
-              </span>
-            </label>
-            <input
-              id="quality-slider"
-              type="range"
-              min="0.1"
-              max="1"
-              step="0.1"
-              value={String(quality)}
-              onInput={(e: Event) => {
-                const val = (e.target as HTMLInputElement).value;
-                setQuality(parseFloat(val));
-              }}
-              class="range range-primary"
-            />
-          </div>
-        </div>
-      </div>
+					{/* Drop Zone */}
+					<button
+						type="button"
+						class={`mt-4 w-full cursor-pointer rounded-xl border-2 border-dashed bg-transparent p-6 text-center transition-all duration-200 md:p-12 ${
+							isDragging
+								? "border-primary bg-primary/10"
+								: "border-base-300 hover:border-primary hover:bg-primary/5"
+						}`}
+						onClick={() => fileInputRef.current?.click()}
+						onDragOver={(e: Event) => {
+							e.preventDefault();
+							setIsDragging(true);
+						}}
+						onDragLeave={(e: Event) => {
+							e.preventDefault();
+							setIsDragging(false);
+						}}
+						onDrop={handleDrop}
+					>
+						<input
+							ref={fileInputRef}
+							type="file"
+							accept="image/jpeg,image/jpg,image/png"
+							class="hidden"
+							onChange={(e: Event) => {
+								const target = e.target as HTMLInputElement;
+								const selected = target.files?.[0];
+								if (selected) handleFileSelect(selected);
+							}}
+						/>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							class="mx-auto h-12 w-12 text-base-content/40 md:h-16 md:w-16"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+							/>
+						</svg>
+						<p class="mt-4 text-base-content/60 text-sm md:text-base">
+							Drag and drop your image here, or click to select
+						</p>
+						<p class="mt-2 text-base-content/40 text-xs">
+							Supports JPG, JPEG, PNG (Max size: {formatFileSize(MAX_FILE_SIZE)}
+							)
+						</p>
+					</button>
 
-      {/* Preview Section */}
-      {file && (
-        <div class="mt-8">
-          <div class="grid grid-cols-1 gap-4 md:gap-6 lg:grid-cols-2">
-            {/* Original Image Card */}
-            <div class="card bg-base-100 shadow-xl">
-              <div class="card-body p-4 md:p-6">
-                <h3 class="card-title text-base md:text-lg">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="h-5 w-5 text-warning"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                  Original
-                </h3>
-                <div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
-                  {previewFailed ? (
-                    <div class="text-center text-base-content/50">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        class="mx-auto h-12 w-12"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                        />
-                      </svg>
-                      <p class="mt-2 text-sm">
-                        Preview unavailable (image too large for display)
-                      </p>
-                      <p class="text-xs">Compression still works normally</p>
-                    </div>
-                  ) : (
-                    <img
-                      src={originalUrl}
-                      onLoad={(e: Event) => {
-                        const img = e.target as HTMLImageElement;
-                        if (!originalDimensions) {
-                          setOriginalDimensions({
-                            width: img.naturalWidth,
-                            height: img.naturalHeight,
-                          });
-                        }
-                      }}
-                      onError={() => setPreviewFailed(true)}
-                      class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
-                      alt="Original file preview"
-                    />
-                  )}
-                </div>
-                <div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
-                  <p>
-                    <strong>Original Size:</strong> {formatFileSize(file.size)}
-                  </p>
-                  {originalDimensions && (
-                    <p>
-                      <strong>Dimensions:</strong> {originalDimensions.width} x{" "}
-                      {originalDimensions.height}
-                    </p>
-                  )}
-                  <p>
-                    <strong>Type:</strong> {file.type}
-                  </p>
-                </div>
-              </div>
-            </div>
+					{/* Quality Slider */}
+					<div class="mt-6">
+						<label class="label flex gap-8" for="quality-slider">
+							<span class="font-semibold">Compression Quality</span>
+							<span class="font-bold text-primary">
+								{Math.round(quality * 100)}%
+							</span>
+						</label>
+						<input
+							id="quality-slider"
+							type="range"
+							min="0.1"
+							max="1"
+							step="0.1"
+							value={String(quality)}
+							onInput={(e: Event) => {
+								const val = (e.target as HTMLInputElement).value;
+								setQuality(parseFloat(val));
+							}}
+							class="range range-primary"
+						/>
+					</div>
+				</div>
+			</div>
 
-            {/* Compressed Image Card */}
-            <div class="card bg-base-100 shadow-xl">
-              <div class="card-body p-4 md:p-6">
-                <h3 class="card-title text-base md:text-lg">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="h-5 w-5 text-success"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                  Compressed
-                </h3>
-                <div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
-                  {result ? (
-                    <img
-                      src={result.compressedUrl}
-                      class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
-                      alt="Compressed result preview"
-                    />
-                  ) : (
-                    <span class="loading loading-spinner loading-md text-primary" />
-                  )}
-                </div>
-                {result && (
-                  <div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
-                    <p>
-                      <strong>Compressed Size:</strong>{" "}
-                      {formatFileSize(result.compressedSize)}
-                    </p>
-                    <p>
-                      <strong>Dimensions:</strong> {result.width} x{" "}
-                      {result.height}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+			{/* Preview Section */}
+			{file && (
+				<div class="mt-8">
+					<div class="grid grid-cols-1 gap-4 md:gap-6 lg:grid-cols-2">
+						{/* Original Image Card */}
+						<div class="card bg-base-100 shadow-xl">
+							<div class="card-body p-4 md:p-6">
+								<h3 class="card-title text-base md:text-lg">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										class="h-5 w-5 text-warning"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										aria-hidden="true"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+									Original
+								</h3>
+								<div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
+									{previewFailed ? (
+										<div class="text-center text-base-content/50">
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												class="mx-auto h-12 w-12"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+												aria-hidden="true"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+												/>
+											</svg>
+											<p class="mt-2 text-sm">
+												Preview unavailable (image too large for display)
+											</p>
+											<p class="text-xs">Compression still works normally</p>
+										</div>
+									) : (
+										<img
+											src={originalUrl}
+											onLoad={(e: Event) => {
+												const img = e.target as HTMLImageElement;
+												if (!originalDimensions) {
+													setOriginalDimensions({
+														width: img.naturalWidth,
+														height: img.naturalHeight,
+													});
+												}
+											}}
+											onError={() => setPreviewFailed(true)}
+											class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
+											alt="Original file preview"
+										/>
+									)}
+								</div>
+								<div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
+									<p>
+										<strong>Original Size:</strong> {formatFileSize(file.size)}
+									</p>
+									{originalDimensions && (
+										<p>
+											<strong>Dimensions:</strong> {originalDimensions.width} x{" "}
+											{originalDimensions.height}
+										</p>
+									)}
+									<p>
+										<strong>Type:</strong> {file.type}
+									</p>
+								</div>
+							</div>
+						</div>
 
-          {/* Stats */}
-          {result && (
-            <div class="card mt-4 bg-base-100 shadow-xl md:mt-6">
-              <div class="card-body p-4 md:p-6">
-                <div class="stats stats-vertical md:stats-horizontal w-full shadow">
-                  <div class="stat">
-                    <div class="stat-title">Compression Ratio</div>
-                    <div class="stat-value text-primary">
-                      {getCompressionRatio(
-                        result.originalSize,
-                        result.compressedSize,
-                      )}
-                      %
-                    </div>
-                    <div class="stat-desc">Size Reduced</div>
-                  </div>
-                  <div class="stat">
-                    <div class="stat-title">Space Saved</div>
-                    <div class="stat-value text-secondary">
-                      {formatFileSize(
-                        Math.max(
-                          0,
-                          calculateBytesSaved(
-                            result.originalSize,
-                            result.compressedSize,
-                          ),
-                        ),
-                      )}
-                    </div>
-                    <div class="stat-desc">Bytes Saved</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+						{/* Compressed Image Card */}
+						<div class="card bg-base-100 shadow-xl">
+							<div class="card-body p-4 md:p-6">
+								<h3 class="card-title text-base md:text-lg">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										class="h-5 w-5 text-success"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										aria-hidden="true"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+									Compressed
+								</h3>
+								<div class="flex min-h-[200px] items-center justify-center rounded-lg bg-base-200 p-2 md:min-h-[300px] md:p-4">
+									{result ? (
+										<img
+											src={result.compressedUrl}
+											class="max-h-[200px] max-w-full rounded-lg object-contain md:max-h-[300px]"
+											alt="Compressed result preview"
+										/>
+									) : (
+										<span class="loading loading-spinner loading-md text-primary" />
+									)}
+								</div>
+								{result && (
+									<div class="mt-2 space-y-1 text-base-content/70 text-xs md:text-sm">
+										<p>
+											<strong>Compressed Size:</strong>{" "}
+											{formatFileSize(result.compressedSize)}
+										</p>
+										<p>
+											<strong>Dimensions:</strong> {result.width} x{" "}
+											{result.height}
+										</p>
+									</div>
+								)}
+							</div>
+						</div>
+					</div>
 
-          {/* Action Buttons — always visible once a file is selected */}
-          <div class="mt-4 flex flex-col items-center justify-center gap-2 sm:flex-row md:mt-6">
-            {result && (
-              <button
-                type="button"
-                class="btn btn-primary btn-wide"
-                onClick={handleDownload}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  class="mr-2 h-5 w-5"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    fill-rule="evenodd"
-                    d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
-                    clip-rule="evenodd"
-                  />
-                </svg>
-                Download Compressed
-              </button>
-            )}
-            <button
-              type="button"
-              class="btn btn-outline btn-wide"
-              onClick={handleReset}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="mr-2 h-5 w-5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  fill-rule="evenodd"
-                  d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                  clip-rule="evenodd"
-                />
-              </svg>
-              Start Over
-            </button>
-          </div>
-        </div>
-      )}
+					{/* Stats */}
+					{result && (
+						<div class="card mt-4 bg-base-100 shadow-xl md:mt-6">
+							<div class="card-body p-4 md:p-6">
+								<div class="stats stats-vertical md:stats-horizontal w-full shadow">
+									<div class="stat">
+										<div class="stat-title">Compression Ratio</div>
+										<div class="stat-value text-primary">
+											{getCompressionRatio(
+												result.originalSize,
+												result.compressedSize,
+											)}
+											%
+										</div>
+										<div class="stat-desc">Size Reduced</div>
+									</div>
+									<div class="stat">
+										<div class="stat-title">Space Saved</div>
+										<div class="stat-value text-secondary">
+											{formatFileSize(
+												Math.max(
+													0,
+													calculateBytesSaved(
+														result.originalSize,
+														result.compressedSize,
+													),
+												),
+											)}
+										</div>
+										<div class="stat-desc">Bytes Saved</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					)}
 
-      {/* Loading Overlay */}
-      {isLoading && <LoadingOverlay />}
+					{/* Action Buttons — always visible once a file is selected */}
+					<div class="mt-4 flex flex-col items-center justify-center gap-2 sm:flex-row md:mt-6">
+						{result && (
+							<button
+								type="button"
+								class="btn btn-primary btn-wide"
+								onClick={handleDownload}
+							>
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									class="mr-2 h-5 w-5"
+									viewBox="0 0 20 20"
+									fill="currentColor"
+									aria-hidden="true"
+								>
+									<path
+										fill-rule="evenodd"
+										d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+										clip-rule="evenodd"
+									/>
+								</svg>
+								Download Compressed
+							</button>
+						)}
+						<button
+							type="button"
+							class="btn btn-outline btn-wide"
+							onClick={handleReset}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								class="mr-2 h-5 w-5"
+								viewBox="0 0 20 20"
+								fill="currentColor"
+								aria-hidden="true"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+							Start Over
+						</button>
+					</div>
+				</div>
+			)}
 
-      {/* Error Toast */}
-      {error && <ErrorToast message={error} onDismiss={() => setError("")} />}
-    </>
-  );
+			{/* Loading Overlay */}
+			{isLoading && <LoadingOverlay />}
+
+			{/* Error Toast */}
+			{error && <ErrorToast message={error} onDismiss={() => setError("")} />}
+		</>
+	);
 };
 
 // Mount the client component into the #root element
 const root = document.getElementById("root");
 if (root) {
-  render(<ImageCompressor />, root);
+	render(<ImageCompressor />, root);
 }
