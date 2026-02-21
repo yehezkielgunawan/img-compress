@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	clampPixoQuality,
+	DECODE_MAX_DIMENSIONS,
 	isValidPixoQuality,
 	PIXO_DEFAULT_QUALITY,
 	PIXO_MAX_QUALITY,
@@ -26,6 +27,24 @@ describe("pixoUtils", () => {
 		it("should have min < default < max", () => {
 			expect(PIXO_MIN_QUALITY).toBeLessThan(PIXO_DEFAULT_QUALITY);
 			expect(PIXO_DEFAULT_QUALITY).toBeLessThan(PIXO_MAX_QUALITY);
+		});
+
+		it("should have DECODE_MAX_DIMENSIONS in descending order", () => {
+			expect(DECODE_MAX_DIMENSIONS.length).toBeGreaterThanOrEqual(2);
+			for (let i = 1; i < DECODE_MAX_DIMENSIONS.length; i++) {
+				expect(DECODE_MAX_DIMENSIONS[i]).toBeLessThan(
+					DECODE_MAX_DIMENSIONS[i - 1],
+				);
+			}
+		});
+
+		it("should have DECODE_MAX_DIMENSIONS with reasonable values", () => {
+			// First entry should be the desktop max (4096)
+			expect(DECODE_MAX_DIMENSIONS[0]).toBe(4096);
+			// All entries must be positive
+			for (const dim of DECODE_MAX_DIMENSIONS) {
+				expect(dim).toBeGreaterThan(0);
+			}
 		});
 	});
 
