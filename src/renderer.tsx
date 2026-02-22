@@ -1,7 +1,14 @@
 import { jsxRenderer } from "hono/jsx-renderer";
 import { Link, Script, ViteClient } from "vite-ssr-components/hono";
 
-export const renderer = jsxRenderer(({ children }) => {
+declare module "hono" {
+	type ContextRenderer = (
+		content: string | Promise<string>,
+		props: { activePage: "canvas" | "pixo" },
+	) => Response | Promise<Response>;
+}
+
+export const renderer = jsxRenderer(({ children, activePage }) => {
 	return (
 		<html lang="en" data-theme="light">
 			<head>
@@ -55,8 +62,8 @@ export const renderer = jsxRenderer(({ children }) => {
 
 				<ViteClient />
 				<Link href="/src/style.css" rel="stylesheet" />
-				<Script src="/src/client.tsx" />
-				<Script src="/src/pixoClient.tsx" />
+				{activePage === "canvas" && <Script src="/src/client.tsx" />}
+				{activePage === "pixo" && <Script src="/src/pixoClient.tsx" />}
 			</head>
 			<body class="min-h-screen bg-base-200">{children}</body>
 		</html>

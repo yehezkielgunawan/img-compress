@@ -101,6 +101,7 @@ app.get("/", (c) => {
 			</main>
 			<Footer />
 		</div>,
+		{ activePage: "canvas" },
 	);
 });
 
@@ -114,6 +115,7 @@ app.get("/pixo", (c) => {
 			</main>
 			<Footer />
 		</div>,
+		{ activePage: "pixo" },
 	);
 });
 
