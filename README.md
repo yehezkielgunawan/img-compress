@@ -11,7 +11,7 @@ A free, local-first image compression web app with two compression engines. Comp
 - **Two Compression Engines** — Choose between Canvas API (Web Worker + OffscreenCanvas) and Pixo WASM (Rust encoder).
 - **Supports JPG, JPEG, PNG** — Accepts the most common image formats.
 - **Adjustable Quality Slider** — Control the compression quality in real time.
-- **Mobile-Resilient** — Handles stale file handles, memory pressure, and progressive-retry decoding for large images on mobile devices.
+- **Mobile-Resilient** — Decode fallback chain (`createImageBitmap` → `<img>` element), progressive canvas-size retry, and immediate event-handler file I/O for mobile compatibility.
 - **Side-by-Side Preview** (Canvas page) — Compare original and compressed images before downloading.
 - **Compression Stats** — See the compression ratio and bytes saved at a glance.
 - **One-Click Download** — Download the compressed image instantly.
@@ -107,9 +107,14 @@ img-compress/
 
 The server (`index.tsx`) renders a static HTML shell with Hono SSR. Each page has a `<div>` mount point where the corresponding client script hydrates an interactive component using `hono/jsx/dom` with hooks (`useState`, `useEffect`, `useRef`). All processing happens in-browser — no network requests are made after the initial page load.
 
-### Shared: Stale File Handle Mitigation
+### Shared: Mobile File Handle & Decode Strategy
 
-On mobile Safari/WebKit, a `File` handle from `<input type="file">` can become invalid between async operations (memory pressure, tab backgrounding). Both pages read the selected file into an in-memory `Blob` **immediately** in `handleFileSelect` — while the handle is guaranteed valid. All subsequent operations (preview, header parse, compression) use this `Blob`, which never goes stale.
+On mobile browsers (iOS Safari, Chrome Android), a `File` handle from `<input type="file">` can reference a `content://` URI that becomes unreadable after the event handler's task completes. Both pages start file I/O **immediately inside `handleFileSelect`** — in the same task as the event handler — so the browser begins reading data before the handle can expire.
+
+Image decoding uses a **fallback chain** for maximum mobile compatibility:
+
+1. **`createImageBitmap(data)`** (no options) — fast, GPU-backed, off-main-thread. Fails on some mobile browsers due to stale handles, unsupported formats, or browser bugs.
+2. **`<img>` element via Object URL** — oldest and most universally supported decode path. Decodes on the main thread but works everywhere the preview `<img>` works.
 
 ### Canvas Page (`/`) — `client.tsx`
 
@@ -123,17 +128,30 @@ On mobile Safari/WebKit, a `File` handle from `<input type="file">` can become i
 
 ### Pixo Page (`/pixo`) — `pixoClient.tsx`
 
-1. **File selection** — Same immediate-read `Blob` pattern as the Canvas page.
-2. **Dimension reading** (for UI display only — not blocking compression):
-   - **Fast path**: Parse the first 256 KB of the file header for PNG IHDR or JPEG SOF.
-   - **Fallback**: If the SOF marker is beyond 256 KB (large EXIF), scan the entire compressed file.
-3. **Pixel extraction** with progressive retry for mobile:
-   - `createImageBitmap(blob, { resizeWidth, resizeHeight })` at a capped resolution.
-   - Tries 4096 → 2048 → 1024 max dimension. Each halving reduces decoded-pixel memory by 4x, allowing mobile devices with tight memory budgets to still process the image.
+1. **File selection** — Validated and decoded immediately in `handleFileSelect` (not in a deferred `useEffect`). WASM init runs in parallel via `Promise.all`.
+2. **Decode + pixel extraction** with fallback chain and progressive retry:
+   - `decodeImage(blob)` tries `createImageBitmap` first, falls back to `<img>` element via Object URL.
+   - Original dimensions come from the decoded source (`bitmap.width`/`height` or `img.naturalWidth`/`height`).
+   - The decoded image is drawn to a **scaled canvas** (`drawImage` with target dimensions). Progressive retry tries 4096 → 2048 → 1024 max canvas size for devices with tight canvas limits.
    - Canvas `getImageData()` extracts RGBA pixels, then `rgbaToRgb()` strips the alpha channel (Pixo expects 3-channel RGB).
+3. **"Decode once, compress many"** — Pixels are extracted once per file and stored in memory. Quality slider changes only re-run the WASM encoder (debounced 300 ms), never re-decode.
 4. **WASM encoding** — The Pixo encoder (`pixo_bg.wasm`) is a Rust-based JPEG encoder compiled to WebAssembly. It runs `encodeJpeg(rgb, width, height, preset, quality, ...)` entirely in-browser.
 5. **Quality range** — 1 to 100 (Pixo's native integer range).
 6. **No preview of compressed result** — The Pixo page shows compression stats (size, ratio, savings) but not a side-by-side preview, keeping memory usage lower on mobile.
+
+## Known Limitations
+
+### Mobile Browser Compatibility
+
+While this app works on mobile devices, there are some inherent limitations with client-side image processing on phones and tablets:
+
+- **Image loading may occasionally fail.** Mobile browsers impose stricter resource limits than desktop browsers. `createImageBitmap` — the preferred decode API — can fail on mobile due to stale file handles, memory pressure, HEIF images presented as JPEG, or browser-specific bugs. The app falls back to an `<img>` element decode path, but even this may fail under tight memory conditions or with very large images.
+- **Very large images (> 20 MP) may cause slowness or failure.** Mobile devices have less RAM and stricter per-tab memory limits. The full-resolution image must be decoded into memory before it can be drawn to a scaled canvas. On older or low-end devices, this can trigger out-of-memory errors.
+- **iOS Safari has limited `createImageBitmap` support.** Safari does not support `createImageBitmap` resize options (`resizeWidth`, `resizeHeight`, `resizeQuality`) and may fail even with the no-options call in some scenarios. The `<img>` element fallback handles most of these cases.
+- **HEIF/HEIC images are not supported.** Some mobile cameras save photos in HEIF format by default. Even if the file has a `.jpg` extension, the actual data may be HEIF, which browsers cannot decode via canvas APIs. Convert to JPEG or PNG before compressing.
+- **Background tabs may lose file references.** If you switch away from the browser tab after selecting a file but before compression completes, the OS may revoke the file handle. Re-select the file if this happens.
+
+For the most reliable experience, use a desktop browser (Chrome, Firefox, Safari, or Edge).
 
 ## License
 
