@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "hono/jsx";
 import { render } from "hono/jsx/dom";
-
 import {
 	calculateBytesSaved,
 	calculateScaledDimensions,
@@ -49,6 +48,77 @@ const ensurePixoInit = (): Promise<void> => {
 		pixoReady = initPixo().then(() => undefined);
 	}
 	return pixoReady;
+};
+
+// ── WASM encoding (worker + fallback) ────────────────────────────────
+
+/**
+ * Encode RGB pixels as JPEG via a dedicated Web Worker.
+ * Creates a new Worker per call and terminates it on completion —
+ * same create-and-terminate pattern as compressWorker.ts / client.tsx.
+ *
+ * The rgb Uint8Array is *copied* into the worker (not transferred)
+ * because the caller may need it for subsequent quality changes.
+ * The result ArrayBuffer is *transferred* back (zero-copy).
+ */
+const encodeInWorker = (
+	rgb: Uint8Array,
+	width: number,
+	height: number,
+	quality: number,
+): Promise<Blob> => {
+	return new Promise((resolve, reject) => {
+		const worker = new Worker(new URL("./pixoWorker.ts", import.meta.url), {
+			type: "module",
+		});
+
+		worker.onmessage = (
+			e: MessageEvent<PixoEncodeSuccess | PixoEncodeError>,
+		) => {
+			worker.terminate();
+			if ("error" in e.data) {
+				reject(new Error(e.data.error));
+			} else {
+				resolve(
+					new Blob([new Uint8Array(e.data.jpegBytes)], {
+						type: "image/jpeg",
+					}),
+				);
+			}
+		};
+
+		worker.onerror = (err) => {
+			worker.terminate();
+			reject(new Error(err.message || "Pixo worker failed"));
+		};
+
+		const msg: PixoEncodeRequest = { rgb, width, height, quality };
+		worker.postMessage(msg);
+	});
+};
+
+/**
+ * Main-thread fallback when the Web Worker path fails (e.g. module
+ * workers unsupported, CSP restrictions, or worker init errors).
+ * Uses the same ensurePixoInit + encodeJpeg call as the old code path.
+ */
+const encodeOnMainThread = async (
+	rgb: Uint8Array,
+	width: number,
+	height: number,
+	quality: number,
+): Promise<Blob> => {
+	await ensurePixoInit();
+	const jpegBytes = encodeJpeg(
+		rgb,
+		width,
+		height,
+		2, // color_type: Rgb
+		quality,
+		1, // preset: balanced
+		true, // subsampling_420
+	);
+	return new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" });
 };
 
 // ── Image decode & pixel extraction ──────────────────────────────────
@@ -224,6 +294,7 @@ export const PixoCompressor = () => {
 	const previewUrlRef = useRef<string | null>(null);
 
 	// Effect: "Decode once, compress many" — re-encode when quality changes.
+	// Tries Web Worker first (off main thread), falls back to main thread.
 	// Only calls WASM encode with already-decoded pixels, no re-decode.
 	useEffect(() => {
 		if (!decodedPixels || !file) return;
@@ -233,21 +304,26 @@ export const PixoCompressor = () => {
 
 		const timer = setTimeout(async () => {
 			try {
-				await ensurePixoInit();
-				const jpegBytes = encodeJpeg(
-					decodedPixels.rgb,
-					decodedPixels.width,
-					decodedPixels.height,
-					2, // preset: balanced
-					quality,
-					1, // threads
-					true, // subsampling420
-				);
+				let blob: Blob;
+				try {
+					blob = await encodeInWorker(
+						decodedPixels.rgb,
+						decodedPixels.width,
+						decodedPixels.height,
+						quality,
+					);
+				} catch {
+					// Worker failed — fall back to main-thread encoding.
+					// This handles: module workers unsupported, CSP issues, etc.
+					blob = await encodeOnMainThread(
+						decodedPixels.rgb,
+						decodedPixels.width,
+						decodedPixels.height,
+						quality,
+					);
+				}
 				if (cancelled) return;
 
-				const blob = new Blob([new Uint8Array(jpegBytes)], {
-					type: "image/jpeg",
-				});
 				setResult({
 					compressedBlob: blob,
 					compressedSize: blob.size,

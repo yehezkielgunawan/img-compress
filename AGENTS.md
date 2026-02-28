@@ -46,9 +46,19 @@ pnpm cf-typegen       # Generate Cloudflare bindings types
 ```
 img-compress/
 ├── src/
-│   ├── index.tsx         # Main Hono app entry point
+│   ├── index.tsx         # Main Hono app entry point (SSR routes)
 │   ├── renderer.tsx      # JSX renderer with SSR components
-│   └── style.css         # Tailwind CSS with daisyUI
+│   ├── client.tsx        # Canvas page client (Web Worker compression)
+│   ├── pixoClient.tsx    # Pixo page client (WASM compression + Web Worker)
+│   ├── compressWorker.ts # Web Worker for off-thread Canvas compression
+│   ├── pixoWorker.ts     # Web Worker for off-thread Pixo WASM encoding
+│   ├── style.css         # Tailwind CSS with daisyUI
+│   └── utils/
+│       ├── imageUtils.ts      # Shared pure utilities (dimensions, formatting)
+│       ├── imageUtils.test.ts # Unit tests for imageUtils
+│       ├── pixoUtils.ts       # Pixo-specific utilities (rgbaToRgb, constants)
+│       ├── pixoUtils.test.ts  # Unit tests for pixoUtils
+│       └── pixo-wasm/         # Pixo WASM bindings (Rust encoder)
 ├── public/               # Static assets
 ├── vite.config.ts        # Vite + Vitest config
 └── wrangler.jsonc        # Cloudflare Workers config
@@ -128,7 +138,7 @@ app.onError((err, c) => {
 - Co-locate test files with source or use `__tests__` directory
 - Vitest globals enabled (`describe`, `it`, `expect`)
 - Coverage thresholds: 70% (lines, branches, functions, statements)
-- Excluded from coverage: `renderer.tsx`, `index.tsx`, `client.tsx`
+- Excluded from coverage: `renderer.tsx`, `index.tsx`, `client.tsx`, `compressWorker.ts`, `pixoClient.tsx`, `pixoWorker.ts`
 
 ```typescript
 describe('imageCompressor', () => {
