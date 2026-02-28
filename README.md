@@ -3,12 +3,12 @@
 A free, local-first image compression web app with two compression engines. Compress JPG, JPEG, and PNG images directly in your browser — no files are ever uploaded to a server.
 
 - **Canvas page (`/`)** — Uses the HTML Canvas API via a Web Worker for fast, off-main-thread JPEG export.
-- **Pixo page (`/pixo`)** — Uses [Pixo](https://docs.rs/pixo/latest/pixo/guides/wasm/index.html), a Rust-based JPEG encoder compiled to WebAssembly.
+- **Pixo page (`/pixo`)** — Uses [Pixo](https://docs.rs/pixo/latest/pixo/guides/wasm/index.html), a Rust-based JPEG encoder compiled to WebAssembly, with Web Worker off-thread encoding.
 
 ## Features
 
 - **100% Client-Side** — All compression runs in your browser. Images never leave your device.
-- **Two Compression Engines** — Choose between Canvas API (Web Worker + OffscreenCanvas) and Pixo WASM (Rust encoder).
+- **Two Compression Engines** — Choose between Canvas API (Web Worker + OffscreenCanvas) and Pixo WASM (Rust encoder via Web Worker).
 - **Supports JPG, JPEG, PNG** — Accepts the most common image formats.
 - **Adjustable Quality Slider** — Control the compression quality in real time.
 - **Mobile-Resilient** — Decode fallback chain (`createImageBitmap` → `<img>` element), progressive canvas-size retry, and immediate event-handler file I/O for mobile compatibility.
@@ -90,6 +90,7 @@ img-compress/
 │   ├── client.tsx             # Canvas page client (Web Worker compression)
 │   ├── pixoClient.tsx         # Pixo page client (WASM compression)
 │   ├── compressWorker.ts      # Web Worker for off-thread Canvas compression
+│   ├── pixoWorker.ts          # Web Worker for off-thread Pixo WASM encoding
 │   ├── style.css              # Tailwind CSS + daisyUI
 │   └── utils/
 │       ├── imageUtils.ts      # Shared pure utilities (dimensions, formatting)
@@ -135,7 +136,7 @@ Image decoding uses a **fallback chain** for maximum mobile compatibility:
    - The decoded image is drawn to a **scaled canvas** (`drawImage` with target dimensions). Progressive retry tries 4096 → 2048 → 1024 max canvas size for devices with tight canvas limits.
    - Canvas `getImageData()` extracts RGBA pixels, then `rgbaToRgb()` strips the alpha channel (Pixo expects 3-channel RGB).
 3. **"Decode once, compress many"** — Pixels are extracted once per file and stored in memory. Quality slider changes only re-run the WASM encoder (debounced 300 ms), never re-decode.
-4. **WASM encoding** — The Pixo encoder (`pixo_bg.wasm`) is a Rust-based JPEG encoder compiled to WebAssembly. It runs `encodeJpeg(rgb, width, height, preset, quality, ...)` entirely in-browser.
+4. **WASM encoding via Web Worker** — `pixoWorker.ts` runs the Pixo encoder (`pixo_bg.wasm`) off the main thread. Each quality change spawns a new Worker that initializes WASM, encodes JPEG, and transfers the result back via `postMessage` with zero-copy `ArrayBuffer` transfer. If module workers are unsupported (older browsers, CSP restrictions), encoding falls back to the main thread transparently.
 5. **Quality range** — 1 to 100 (Pixo's native integer range).
 6. **No preview of compressed result** — The Pixo page shows compression stats (size, ratio, savings) but not a side-by-side preview, keeping memory usage lower on mobile.
 
